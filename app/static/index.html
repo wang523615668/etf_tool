@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>ETF 拯救世界投资仪表盘</title>
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+  <link rel="stylesheet" href="/static/style.css?v=20260715b" />
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="brand">ETF 投资仪表盘</div>
+    <a href="#overview">首页总览</a>
+    <a href="#valuation">估值温度计</a>
+    <a href="#sunburst">仓位旭日图</a>
+    <a href="#signals">买卖提醒</a>
+    <a href="#compare">E大对齐复盘</a>
+    <a href="#calibration">规则校准池</a>
+    <a href="#edTalks">E大发言归档</a>
+    <a href="#topics">主题知识库</a>
+    <a href="#rules">方法论规则</a>
+    <a href="/index-detail" style="border-top:1px solid #2d3148;margin-top:8px;padding-top:8px;color:#f59e0b">📊 指数估值详情</a>
+  </aside>
+  <main class="main">
+    <section id="overview" class="hero">
+      <div>
+        <h1>ETF 拯救世界 × 理杏仁 × 本地纪律系统</h1>
+        <p>目标：先跟踪 E大操作，逐步训练本地买卖提醒，最终在没有带领操作时仍能按纪律执行。</p>
+      </div>
+      <div class="hero-card">
+        <div class="muted">最新同步</div>
+        <strong id="syncTime">读取中…</strong>
+      </div>
+    </section>
+
+    <section class="cards" id="summaryCards"></section>
+    <section id="freshnessWarning" class="freshness-warning"></section>
+
+    <section id="valuation" class="panel">
+      <div class="panel-head">
+        <div>
+          <h2>指数估值温度计</h2>
+          <p>默认理杏仁 Open API 本地五年分位；失败时回退且慢。红利类按 PB 优先，过期数据自动暂停判断。</p>
+        </div>
+        <div id="valuationMeta" class="topic-meta">读取中…</div>
+      </div>
+      <div id="decisionBoard" class="decision-board"></div>
+      <div id="valuationList" class="valuation-grid"></div>
+    </section>
+
+    <section id="exposure" class="panel">
+      <h2>长赢组合方向暴露</h2>
+      <p>把 150 份和 S 定投按资产方向汇总，后续用于判断当前组合是否偏离目标仓位。</p>
+      <div id="exposureGrid" class="exposure-grid"></div>
+    </section>
+
+    <section id="sunburst" class="panel">
+      <div class="panel-head">
+        <div>
+          <h2>长赢仓位旭日图</h2>
+          <p>同步长赢 150 份和 S 定投持仓，按方向 → 产品 → 份数展示。</p>
+        </div>
+        <select id="planSelect">
+          <option value="long_win_150">长赢 150 份</option>
+          <option value="long_win_s">S 定投</option>
+        </select>
+      </div>
+      <div id="sunburstChart"></div>
+    </section>
+
+    <section id="signals" class="panel">
+      <h2>最近发车</h2>
+      <p>来自 ETF 投资分析网 Supabase 数据，150 份和 S 定投合并展示；点击卡片查看归档文章抽取的发车原因。</p>
+      <div id="recentActions" class="action-grid"></div>
+    </section>
+
+    <div id="reasonModal" class="modal hidden">
+      <div class="modal-card">
+        <button id="reasonModalClose" class="modal-close">×</button>
+        <div id="reasonModalBody"></div>
+      </div>
+    </div>
+
+    <section class="panel">
+      <h2>今日买卖提醒</h2>
+      <p>基于理杏仁估值分位、长赢持仓和近期 E大操作生成；仅作纪律复核，不替代人工确认。</p>
+      <div id="signalList" class="signal-list"></div>
+    </section>
+
+    <section id="compare" class="panel">
+      <h2>E大操作 vs 本地提醒</h2>
+      <p>用于复盘：E大买了但我没提醒、我提醒了但 E大没买，都进入规则校准池。</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>日期</th><th>来源</th><th>动作</th><th>产品</th><th>份数</th><th>差异</th></tr></thead>
+          <tbody id="compareTable"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="calibration" class="panel">
+      <div class="panel-head">
+        <div>
+          <h2>规则校准池</h2>
+          <p>45 天窗口内本地提醒与 E大操作的匹配率；差异样本用于改进规则，不直接当“对错判决”。</p>
+        </div>
+        <div id="calibrationMeta" class="topic-meta">读取中…</div>
+      </div>
+      <div id="calibrationCards" class="decision-board"></div>
+      <div id="calibrationSamples" class="topic-items"></div>
+    </section>
+
+    <section id="edTalks" class="panel">
+      <div class="panel-head">
+        <div>
+          <h2>E大发言归档</h2>
+          <p>从且慢社区归档 ETF拯救世界 近期文章，用于发车原因与纪律复盘。</p>
+        </div>
+        <div class="topic-meta" id="edTalkMeta">读取中…</div>
+      </div>
+      <div id="edTalkList" class="topic-items"></div>
+    </section>
+
+    <section id="topics" class="panel">
+      <div class="panel-head">
+        <div>
+          <h2>ETF拯救世界主题知识库</h2>
+          <p>把 ChinaETFS / 且慢下载内容按主题多标签归类，作为买卖纪律和规则复盘依据。</p>
+        </div>
+        <div class="topic-meta" id="topicMeta">读取中…</div>
+      </div>
+      <div id="topicTabs" class="topic-tabs"></div>
+      <div id="topicItems" class="topic-items"></div>
+    </section>
+
+    <section id="rules" class="panel">
+      <h2>后续规则引擎</h2>
+      <div class="rule-grid">
+        <div><b>低估买入</b><span>PE/PB 分位低 + 仓位未满 → 分批买</span></div>
+        <div><b>高估减仓</b><span>分位高 + 已获利 + E大历史有类似卖出 → 减/停</span></div>
+        <div><b>网格策略</b><span>恒生科技、中概、证券、医药等高波动品种适用</span></div>
+        <div><b>对齐学习</b><span>每次和 E大差异都会沉淀为校准样本</span></div>
+      </div>
+    </section>
+  </main>
+  <script src="/static/app.js?v=20260715c"></script>
+</body>
+</html>

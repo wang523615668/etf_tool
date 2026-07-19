@@ -1,0 +1,247 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>指数估值详情 · ETF 仪表盘</title>
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+  <link rel="stylesheet" href="/static/style.css" />
+  <style>
+    .detail-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 16px;
+    }
+    .detail-toolbar .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+    }
+    .detail-toolbar select,
+    .detail-toolbar button {
+      background: #131c35;
+      color: #e8ecff;
+      border: 1px solid #2d3b63;
+      border-radius: 10px;
+      padding: 8px 12px;
+    }
+    .detail-toolbar a.back {
+      color: #69d2ff;
+      text-decoration: none;
+    }
+    .pb-only-banner {
+      display: none;
+      margin: 0 0 16px;
+      padding: 12px 14px;
+      border-radius: 12px;
+      background: rgba(245, 158, 11, 0.12);
+      border: 1px solid rgba(245, 158, 11, 0.45);
+      color: #ffd166;
+    }
+    .pb-only-banner.show { display: block; }
+    .metric-row {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+    .metric-card {
+      background: #111831;
+      border: 1px solid #26304f;
+      border-radius: 14px;
+      padding: 14px;
+    }
+    .metric-card .label { color: #9aa6c7; font-size: 13px; }
+    .metric-card strong { display: block; margin-top: 6px; font-size: 22px; }
+    .chart-panel {
+      background: #111831;
+      border: 1px solid #26304f;
+      border-radius: 16px;
+      padding: 14px;
+      margin-bottom: 16px;
+    }
+    .chart-panel h3 { margin: 0 0 8px; font-size: 16px; }
+    .chart-box { width: 100%; height: 320px; }
+    @media (max-width: 900px) {
+      .metric-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .chart-box { height: 260px; }
+    }
+  </style>
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="brand">ETF 投资仪表盘</div>
+    <a href="/">← 返回首页</a>
+    <a href="/#valuation">估值温度计</a>
+    <a href="/#signals">买卖提醒</a>
+    <a href="/#calibration">规则校准池</a>
+    <a href="/index-detail" style="border-top:1px solid #2d3148;margin-top:8px;padding-top:8px;color:#f59e0b">📊 指数估值详情</a>
+  </aside>
+  <main class="main">
+    <section class="hero">
+      <div>
+        <h1 id="pageTitle">指数估值详情</h1>
+        <p>理杏仁 Open API 历史序列 + 本地五年分位。红利/银行类默认 PB 优先。</p>
+      </div>
+      <div class="hero-card">
+        <div class="muted">当前指数</div>
+        <strong id="currentName">加载中…</strong>
+      </div>
+    </section>
+
+    <div class="detail-toolbar">
+      <a class="back" href="/">← 返回总览</a>
+      <div class="controls">
+        <label class="muted">指数
+          <select id="indexSelect"></select>
+        </label>
+        <label class="muted">窗口
+          <select id="windowSelect">
+            <option value="3">3 年</option>
+            <option value="5" selected>5 年</option>
+            <option value="10">10 年</option>
+          </select>
+        </label>
+        <button id="reloadBtn" type="button">刷新</button>
+      </div>
+    </div>
+
+    <div id="pbOnlyBanner" class="pb-only-banner">红利/银行类指数 PE 分位易失真，本页以 PB 分位为主判断估值。</div>
+    <div id="errorBox" class="freshness-warning"></div>
+    <div id="metricRow" class="metric-row"></div>
+
+    <section class="chart-panel">
+      <h3>PE 历史</h3>
+      <div id="peChart" class="chart-box"></div>
+    </section>
+    <section class="chart-panel">
+      <h3>PB 历史</h3>
+      <div id="pbChart" class="chart-box"></div>
+    </section>
+    <section class="chart-panel">
+      <h3>指数点位</h3>
+      <div id="cpChart" class="chart-box"></div>
+    </section>
+  </main>
+
+  <script>
+    function esc(v) {
+      return String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+    }
+    function pct(v) {
+      return v == null || Number.isNaN(Number(v)) ? '-' : `${Math.round(Number(v) * 100)}%`;
+    }
+    function num(v, d = 2) {
+      return v == null || Number.isNaN(Number(v)) ? '-' : Number(v).toFixed(d);
+    }
+    async function getJSON(url) {
+      const r = await fetch(url);
+      if (!r.ok) throw new Error(url + ' ' + r.status);
+      return r.json();
+    }
+    function hashName() {
+      const h = decodeURIComponent((location.hash || '').replace(/^#/, '')).trim();
+      return h || '';
+    }
+    function setHash(name) {
+      const next = '#' + encodeURIComponent(name);
+      if (location.hash !== next) history.replaceState(null, '', next);
+    }
+    function makeChart(el) {
+      const chart = echarts.init(el);
+      window.addEventListener('resize', () => chart.resize());
+      return chart;
+    }
+    const charts = {
+      pe: makeChart(document.getElementById('peChart')),
+      pb: makeChart(document.getElementById('pbChart')),
+      cp: makeChart(document.getElementById('cpChart')),
+    };
+    function lineOption(title, dates, values, color) {
+      return {
+        backgroundColor: 'transparent',
+        grid: { left: 48, right: 18, top: 28, bottom: 40 },
+        tooltip: { trigger: 'axis' },
+        xAxis: { type: 'category', data: dates, axisLabel: { color: '#9aa6c7' }, axisLine: { lineStyle: { color: '#2d3b63' } } },
+        yAxis: { type: 'value', scale: true, axisLabel: { color: '#9aa6c7' }, splitLine: { lineStyle: { color: '#1b2544' } } },
+        series: [{
+          name: title,
+          type: 'line',
+          showSymbol: false,
+          data: values,
+          lineStyle: { width: 2, color },
+          areaStyle: { color: color + '22' },
+          itemStyle: { color },
+        }],
+      };
+    }
+    function renderMetrics(detail) {
+      const latest = detail.latest || {};
+      document.getElementById('metricRow').innerHTML = `
+        <div class="metric-card"><div class="label">最新日期</div><strong>${esc(latest.date || '-')}</strong></div>
+        <div class="metric-card"><div class="label">PE / 分位</div><strong>${num(latest.pe)} · ${pct(latest.pe_percentile)}</strong></div>
+        <div class="metric-card"><div class="label">PB / 分位</div><strong>${num(latest.pb)} · ${pct(latest.pb_percentile)}</strong></div>
+        <div class="metric-card"><div class="label">点位</div><strong>${num(latest.cp, 2)}</strong></div>`;
+      document.getElementById('pbOnlyBanner').classList.toggle('show', !!detail.pb_only);
+      document.getElementById('currentName').textContent = `${detail.name || '-'} · ${detail.code || ''}`;
+      document.getElementById('pageTitle').textContent = `${detail.name || '指数'} 估值详情`;
+    }
+    function renderCharts(detail) {
+      const rows = detail.rows || [];
+      const dates = rows.map(r => r.date);
+      charts.pe.setOption(lineOption('PE', dates, rows.map(r => r.pe), '#69d2ff'), true);
+      charts.pb.setOption(lineOption('PB', dates, rows.map(r => r.pb), '#18c37e'), true);
+      charts.cp.setOption(lineOption('点位', dates, rows.map(r => r.cp), '#ffd166'), true);
+    }
+    async function loadList() {
+      const data = await getJSON('/api/index-list');
+      const select = document.getElementById('indexSelect');
+      const items = data.items || [];
+      select.innerHTML = items.map(it => `<option value="${esc(it.name)}">${esc(it.name)} (${esc(it.code)})</option>`).join('');
+      const preferred = hashName() || (items[0] && items[0].name) || '沪深300';
+      if ([...select.options].some(o => o.value === preferred)) select.value = preferred;
+      return select.value;
+    }
+    async function loadDetail() {
+      const name = document.getElementById('indexSelect').value;
+      const years = document.getElementById('windowSelect').value || '5';
+      const box = document.getElementById('errorBox');
+      box.className = 'freshness-warning';
+      box.textContent = '';
+      try {
+        const detail = await getJSON(`/api/index/${encodeURIComponent(name)}?window_years=${years}`);
+        if (detail.error) throw new Error(detail.error);
+        setHash(name);
+        renderMetrics(detail);
+        renderCharts(detail);
+      } catch (err) {
+        box.className = 'freshness-warning show';
+        box.textContent = '加载失败：' + (err.message || err);
+      }
+    }
+    async function boot() {
+      await loadList();
+      await loadDetail();
+      document.getElementById('indexSelect').addEventListener('change', loadDetail);
+      document.getElementById('windowSelect').addEventListener('change', loadDetail);
+      document.getElementById('reloadBtn').addEventListener('click', loadDetail);
+      window.addEventListener('hashchange', async () => {
+        const name = hashName();
+        const select = document.getElementById('indexSelect');
+        if (name && select.value !== name && [...select.options].some(o => o.value === name)) {
+          select.value = name;
+          await loadDetail();
+        }
+      });
+    }
+    boot().catch(err => {
+      document.getElementById('errorBox').className = 'freshness-warning show';
+      document.getElementById('errorBox').textContent = String(err && err.stack || err);
+    });
+  </script>
+</body>
+</html>

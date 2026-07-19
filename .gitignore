@@ -1,0 +1,15 @@
+# Sensitive
+*.conf
+*.token
+*.key
+*.pem
+.env
+token*
+cookie*
+*.cookie
+
+# Data/cache (large)
+data/
+cache/
+__pycache__/
+*.pyc
