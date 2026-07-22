@@ -20,6 +20,13 @@ from app.data_sources.lixinger import (
     build_valuation_snapshot as build_lixinger_valuation_snapshot,
     get_index_detail as get_lixinger_index_detail,
 )
+from app.decision_memory import (
+    add_trade,
+    apply_execution_filter,
+    delete_trade,
+    load_my_trades,
+    update_settings as update_my_trade_settings,
+)
 
 BASE = Path(__file__).resolve().parents[1]
 DATA = BASE / "data"
@@ -31,6 +38,7 @@ TOPIC_INDEX = Path("/vol1/1000/openzl/qieman_etf/topic整理/topic_index.json")
 if not TOPIC_INDEX.exists():
     TOPIC_INDEX = BASE / "data" / "topic_index.json"
 ED_TALKS = DATA / "ed_talks.json"
+INDEX_KNOWLEDGE = DATA / "index_knowledge.json"
 CALIBRATION_WINDOW_DAYS = 45
 
 app = FastAPI(title="ETF 拯救世界投资仪表盘")
@@ -126,12 +134,36 @@ def category_key(row: dict[str, Any]) -> str:
     return text
 
 
-def ed_talk_archive() -> dict[str, Any]:
+def ed_talk_archive(limit: int | None = None, include_full: bool = False) -> dict[str, Any]:
     if not ED_TALKS.exists():
         return {"generated_at": None, "total": 0, "items": []}
     raw = json.loads(ED_TALKS.read_text(encoding="utf-8"))
-    items = raw.get("items", [])
-    return {"generated_at": raw.get("generated_at"), "total": len(items), "items": items}
+    items = list(raw.get("items", []))
+    total = len(items)
+    if limit is not None:
+        items = items[: max(0, int(limit))]
+    if not include_full:
+        slim = []
+        for item in items:
+            slim.append(
+                {
+                    "id": item.get("id"),
+                    "item_id": item.get("item_id"),
+                    "title": item.get("title"),
+                    "date": item.get("date"),
+                    "url": item.get("url") or item.get("content_url"),
+                    "operation_reason": item.get("operation_reason"),
+                    "reason_evidence": (item.get("reason_evidence") or [])[:3],
+                    "valuation_context": item.get("valuation_context"),
+                    "position_context": item.get("position_context"),
+                    "risk_note": item.get("risk_note"),
+                    "text_excerpt": item.get("text_excerpt") or item.get("summary"),
+                    "action": item.get("action"),
+                    "source": item.get("source"),
+                }
+            )
+        items = slim
+    return {"generated_at": raw.get("generated_at"), "total": total, "items": items}
 
 
 def _norm_url(url: str | None) -> str:
@@ -143,7 +175,7 @@ def _norm_url(url: str | None) -> str:
 def reason_by_url() -> dict[str, dict[str, Any]]:
     """Exact URL index. Note: 发车 content/items/* 与社区 content-detail?postId=* 是两套 ID。"""
     out: dict[str, dict[str, Any]] = {}
-    for item in ed_talk_archive().get("items", []):
+    for item in ed_talk_archive(include_full=True).get("items", []):
         candidates: list[str] = []
         for key in ("url", "content_url"):
             u = item.get(key)
@@ -175,7 +207,7 @@ def reason_by_url() -> dict[str, dict[str, Any]]:
 
 def reason_by_date() -> dict[str, list[dict[str, Any]]]:
     grouped: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for item in ed_talk_archive().get("items", []):
+    for item in ed_talk_archive(include_full=True).get("items", []):
         day = str(item.get("date") or "")[:10]
         if day:
             grouped[day].append(item)
@@ -514,10 +546,11 @@ def valuation_dashboard(source: str = "lixinger") -> dict[str, Any]:
     errors: list[str] = []
     if source in {"lixinger", "auto", "default"}:
         try:
-            dash = build_lixinger_valuation_snapshot()
+            # Web path: cache only — never burn 理杏仁 token on page open
+            dash = build_lixinger_valuation_snapshot(allow_network=False)
             if dash.get("rows"):
                 return dash
-            errors.append("lixinger empty")
+            errors.append("lixinger empty/cache-missing")
         except Exception as exc:
             errors.append(f"lixinger: {exc}")
     if source in {"danjuan", "auto", "default", "lixinger"}:
@@ -552,7 +585,8 @@ def valuation_dashboard(source: str = "lixinger") -> dict[str, Any]:
             "pause": groups["pause"][:10],
         },
         "rows": rows,
-        "data_source": "jztz" if rows else "none",
+        "data_source": "jztz_fallback" if rows else "none",
+        "cache_only": True,
     }
 
 
@@ -602,6 +636,54 @@ def topic_library(limit_per_topic: int = 20) -> dict[str, Any]:
     }
 
 
+def load_index_knowledge() -> dict[str, Any]:
+    if not INDEX_KNOWLEDGE.exists():
+        return {"generated_at": None, "indices": {}}
+    try:
+        return json.loads(INDEX_KNOWLEDGE.read_text(encoding="utf-8"))
+    except Exception:
+        return {"generated_at": None, "indices": {}}
+
+
+def _is_150_plan(plan: Any) -> bool:
+    text = str(plan or "").strip().lower()
+    if not text:
+        return False
+    return text in {"long_win_150", "150", "长赢150", "长赢 150"} or "long_win_150" in text
+
+
+def index_knowledge_for(name: str, article_limit: int = 30, action_limit: int = 80) -> dict[str, Any]:
+    pack = (load_index_knowledge().get("indices") or {}).get(name) or {}
+    if not pack:
+        return {
+            "article_count": 0,
+            "action_count": 0,
+            "buy_count": 0,
+            "sell_count": 0,
+            "articles": [],
+            "actions": [],
+            "marks": [],
+            "knowledge_generated_at": load_index_knowledge().get("generated_at"),
+            "plan_filter": "long_win_150",
+        }
+    articles = list(pack.get("articles") or [])[:article_limit]
+    # safety: only 150 plan buy/sell on chart + list (exclude S)
+    actions = [a for a in (pack.get("actions") or []) if _is_150_plan(a.get("plan"))][:action_limit]
+    marks = [m for m in (pack.get("marks") or []) if _is_150_plan(m.get("plan"))][:action_limit]
+    return {
+        "article_count": int(pack.get("article_count") or len(articles)),
+        "action_count": len(actions),
+        "buy_count": sum(1 for a in actions if a.get("action") == "buy"),
+        "sell_count": sum(1 for a in actions if a.get("action") == "sell"),
+        "articles": articles,
+        "actions": actions,
+        "marks": marks,
+        "knowledge_generated_at": load_index_knowledge().get("generated_at"),
+        "keywords": pack.get("keywords") or [],
+        "plan_filter": "long_win_150",
+    }
+
+
 @app.get("/", response_class=HTMLResponse)
 def index() -> str:
     return (STATIC / "index.html").read_text(encoding="utf-8")
@@ -622,6 +704,25 @@ def api_summary() -> dict[str, Any]:
     valuation = valuation_dashboard()
     reasons = reason_by_url()
     by_date = reason_by_date()
+    # personal execution memory: suppress re-buy after you already bought
+    filtered = apply_execution_filter(list(signals.get("signals") or []))
+    # attach latest cp from valuation cache so space-rule can work on next opens
+    cp_by_name = {r.get("name"): r.get("cp") for r in (valuation.get("rows") or []) if r.get("name")}
+    cp_by_code = {
+        str(r.get("code") or "").split(".")[0]: r.get("cp")
+        for r in (valuation.get("rows") or [])
+        if r.get("code")
+    }
+    active = []
+    for s in filtered["signals"]:
+        row = dict(s)
+        code = str(row.get("code") or "").split(".")[0]
+        if row.get("cp") is None:
+            row["cp"] = cp_by_name.get(row.get("name")) or cp_by_code.get(code)
+        active.append(row)
+    # re-filter once with prices filled (space resume)
+    filtered2 = apply_execution_filter(active)
+    suppressed = filtered2.get("suppressed_signals") or filtered.get("suppressed_signals") or []
     return {
         "generated_at": long_win.get("generated_at"),
         "data_source": valuation.get("data_source") or long_win.get("source") or "local",
@@ -634,7 +735,13 @@ def api_summary() -> dict[str, Any]:
         "recent_actions": [
             enrich_action_reason(action, reasons, by_date) for action in signals.get("ed_actions", [])[:12]
         ],
-        "signals": signals.get("signals", []),
+        "signals": filtered2.get("signals") or active,
+        "suppressed_signals": suppressed,
+        "decision_memory": {
+            "settings": filtered2.get("settings"),
+            "my_trade_count": filtered2.get("my_trade_count"),
+            "rule": "买入后默认冷却3天；或较买入点再跌≥3%才恢复同向买入（时间或空间二选一）",
+        },
         "valuation_freshness": valuation.get("freshness") or valuation_freshness(),
         "valuation_rows": (valuation.get("rows") or [])[:12],
         "valuation_dashboard": valuation,
@@ -644,6 +751,29 @@ def api_summary() -> dict[str, Any]:
             key: value for key, value in topic_library(limit_per_topic=0).items() if key != "topics"
         },
     }
+
+
+@app.get("/api/my-trades")
+def api_my_trades() -> dict[str, Any]:
+    return load_my_trades()
+
+
+@app.post("/api/my-trades")
+def api_my_trades_add(body: dict[str, Any]) -> dict[str, Any]:
+    try:
+        return add_trade(body or {})
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+@app.delete("/api/my-trades/{trade_id}")
+def api_my_trades_delete(trade_id: str) -> dict[str, Any]:
+    return delete_trade(trade_id)
+
+
+@app.post("/api/my-trades/settings")
+def api_my_trades_settings(body: dict[str, Any]) -> dict[str, Any]:
+    return update_my_trade_settings(body or {})
 
 
 @app.get("/api/sunburst/{plan_key}")
@@ -713,9 +843,58 @@ def api_index_detail(name: str, window_years: float = 5.0) -> dict[str, Any]:
         else:
             return {"error": f"unknown index: {name}", "name": name, "rows": []}
     try:
-        return get_lixinger_index_detail(name, window_years=window_years)
+        # detail page: local cache only (no 理杏仁 token on every open)
+        detail = get_lixinger_index_detail(name, window_years=window_years, allow_network=False)
     except Exception as exc:
         return {"error": str(exc), "name": name, "rows": []}
+    knowledge = index_knowledge_for(name)
+    # Align marks to chart date axis: only keep marks that fall inside row window,
+    # and attach nearest close (cp) for tooltip / y placement.
+    rows = detail.get("rows") or []
+    date_to_cp: dict[str, float | None] = {}
+    dates = []
+    for r in rows:
+        d = str(r.get("date") or "")[:10]
+        if not d:
+            continue
+        dates.append(d)
+        cp = r.get("cp")
+        try:
+            date_to_cp[d] = float(cp) if cp is not None else None
+        except (TypeError, ValueError):
+            date_to_cp[d] = None
+    date_set = set(dates)
+    marks_out = []
+    for m in knowledge.get("marks") or []:
+        day = str(m.get("date") or "")[:10]
+        if not day:
+            continue
+        # if exact trading day missing, keep mark only when inside window range
+        if dates and (day < dates[0] or day > dates[-1]):
+            continue
+        cp = date_to_cp.get(day)
+        if cp is None and day not in date_set and dates:
+            # nearest previous trading day
+            prev = [d for d in dates if d <= day]
+            if prev:
+                day_use = prev[-1]
+                cp = date_to_cp.get(day_use)
+            else:
+                day_use = day
+        else:
+            day_use = day
+        marks_out.append({**m, "date": day_use, "cp": cp})
+    detail["articles"] = knowledge.get("articles") or []
+    detail["actions"] = knowledge.get("actions") or []
+    detail["marks"] = marks_out
+    detail["article_count"] = knowledge.get("article_count") or len(detail["articles"])
+    detail["action_count"] = knowledge.get("action_count") or len(detail["actions"])
+    detail["buy_count"] = knowledge.get("buy_count") or 0
+    detail["sell_count"] = knowledge.get("sell_count") or 0
+    detail["knowledge_generated_at"] = knowledge.get("knowledge_generated_at")
+    detail["knowledge_keywords"] = knowledge.get("keywords") or []
+    detail["plan_filter"] = knowledge.get("plan_filter") or "long_win_150"
+    return detail
 
 
 @app.get("/api/topics")
@@ -724,5 +903,18 @@ def api_topics() -> dict[str, Any]:
 
 
 @app.get("/api/ed-talks")
-def api_ed_talks() -> dict[str, Any]:
-    return ed_talk_archive()
+def api_ed_talks(limit: int = 30, include_full: bool = False) -> dict[str, Any]:
+    # Homepage only needs recent slim cards; full text is huge (~0.7MB) and freezes mobile.
+    return ed_talk_archive(limit=limit, include_full=include_full)
+
+
+@app.get("/api/index-knowledge/{name}")
+def api_index_knowledge(name: str) -> dict[str, Any]:
+    if name not in LIXINGER_INDEX_CONFIG:
+        for n, cfg in LIXINGER_INDEX_CONFIG.items():
+            if cfg["code"] == name or n.replace(" ", "") == name:
+                name = n
+                break
+    pack = index_knowledge_for(name, article_limit=50, action_limit=120)
+    pack["name"] = name
+    return pack

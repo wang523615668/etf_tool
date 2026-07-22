@@ -61,7 +61,13 @@ function renderCards(data) {
 
 async function renderSunburst(plan = 'long_win_150') {
   const data = await getJSON('/api/sunburst/' + plan);
-  const chart = echarts.init(document.getElementById('sunburstChart'));
+  const el = document.getElementById('sunburstChart');
+  if (!el) return;
+  if (typeof echarts === 'undefined') {
+    el.innerHTML = '<div class="muted">图表库未加载（echarts），其它模块仍可用</div>';
+    return;
+  }
+  const chart = echarts.init(el);
   chart.setOption({
     backgroundColor: 'transparent',
     tooltip: { formatter: p => `${p.name}<br/>份数：${p.value || ''}` },
@@ -82,13 +88,129 @@ async function renderSunburst(plan = 'long_win_150') {
   window.addEventListener('resize', () => chart.resize());
 }
 
-function renderSignals(signals) {
-  document.getElementById('signalList').innerHTML = signals.map(signal => `
-    <div class="signal ${signal.action}">
-      <div class="action">${signal.date} · ${actionText[signal.action] || signal.action} · 置信度 ${signal.confidence ?? '-'}</div>
-      <div class="name">${signal.name} <span class="muted">${signal.code}</span></div>
-      <div class="reason">${signal.reason}</div>
-    </div>`).join('');
+function renderSignals(signals, suppressed = [], decisionMemory = null) {
+  const list = document.getElementById('signalList');
+  const suppressedBox = document.getElementById('suppressedSignals');
+  const meta = document.getElementById('signalMeta');
+  if (!list) return;
+  const active = signals || [];
+  const cool = suppressed || [];
+  if (meta) {
+    const rule = decisionMemory?.rule || '买入后冷却；大跌可提前恢复';
+    meta.textContent = `有效 ${active.length} · 冷却中 ${cool.length}`;
+    meta.title = rule;
+  }
+  if (!active.length) {
+    list.innerHTML = '<div class="empty-hint">今日无新的有效买卖提醒（可能都在冷却中）</div>';
+  } else {
+    list.innerHTML = active.map((signal, index) => `
+      <div class="signal ${signal.action}" data-sig="${index}">
+        <div class="action">${signal.date} · ${actionText[signal.action] || signal.action} · 置信度 ${signal.confidence ?? '-'}</div>
+        <div class="name">${htmlEscape(signal.name)} <span class="muted">${htmlEscape(signal.code || '')}</span></div>
+        <div class="reason">${htmlEscape(signal.reason || '')}</div>
+        <div class="signal-actions">
+          ${signal.action === 'buy' ? `<button class="btn-mini btn-buy-done" data-idx="${index}">我已买入</button>` : ''}
+          ${signal.action === 'reduce' || signal.action === 'sell' ? `<button class="btn-mini btn-sell-done" data-idx="${index}">我已卖出/减仓</button>` : ''}
+        </div>
+      </div>`).join('');
+    list.querySelectorAll('.btn-buy-done').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const s = active[Number(btn.dataset.idx)];
+        await recordMyTrade({ ...s, action: 'buy' }, btn);
+      });
+    });
+    list.querySelectorAll('.btn-sell-done').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const s = active[Number(btn.dataset.idx)];
+        await recordMyTrade({ ...s, action: s.action === 'sell' ? 'sell' : 'reduce' }, btn);
+      });
+    });
+  }
+  if (suppressedBox) {
+    if (!cool.length) {
+      suppressedBox.innerHTML = '';
+    } else {
+      suppressedBox.innerHTML = `<div class="cooldown-title">冷却中（已执行，暂不重复提醒）</div>` + cool.map(signal => `
+        <div class="signal cooldown ${signal.action}">
+          <div class="action">${signal.date} · ${actionText[signal.action] || signal.action} · 冷却</div>
+          <div class="name">${htmlEscape(signal.name)} <span class="muted">${htmlEscape(signal.code || '')}</span></div>
+          <div class="reason">${htmlEscape(signal.cooldown?.reason || signal.reason || '')}</div>
+        </div>`).join('');
+    }
+  }
+}
+
+async function recordMyTrade(signal, btn) {
+  if (btn) {
+    btn.disabled = true;
+    btn.textContent = '记录中…';
+  }
+  try {
+    const body = {
+      action: signal.action || 'buy',
+      name: signal.name,
+      code: signal.code,
+      category: signal.category,
+      shares: signal.shares ?? 1,
+      price: signal.cp ?? signal.price ?? null,
+      source_signal_date: signal.date,
+      note: 'from dashboard signal',
+    };
+    const res = await fetch('/api/my-trades', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || 'record failed');
+    if (btn) btn.textContent = '已记录';
+    // refresh summary so signal moves into cooldown immediately
+    const summary = await getJSON('/api/summary');
+    renderSignals(summary.signals || [], summary.suppressed_signals || [], summary.decision_memory || null);
+    renderMyTrades();
+  } catch (err) {
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = '重试';
+    }
+    alert('记录失败：' + (err.message || err));
+  }
+}
+
+async function renderMyTrades() {
+  const box = document.getElementById('myTradeList');
+  const meta = document.getElementById('myTradeMeta');
+  if (!box) return;
+  try {
+    const data = await getJSON('/api/my-trades');
+    const trades = data.trades || [];
+    const st = data.settings || {};
+    if (meta) {
+      meta.textContent = `${trades.length} 条 · 买冷却${st.buy_cooldown_days ?? 3}天/跌${Math.round((st.buy_drop_resume_pct || 0.03) * 100)}%恢复`;
+    }
+    if (!trades.length) {
+      box.innerHTML = '<div class="muted">还没有个人成交记录。收到买入提醒并实际买入后，点「我已买入」。</div>';
+      return;
+    }
+    box.innerHTML = trades.slice(0, 12).map(t => `
+      <article class="talk-item">
+        <div class="topic-source">${htmlEscape(t.date)} · ${actionText[t.action] || t.action} · ${htmlEscape(t.category || '')}</div>
+        <h3>${htmlEscape(t.name || '-')} <span class="muted">${htmlEscape(t.code || '')}</span></h3>
+        <p>${t.shares != null ? htmlEscape(t.shares) + ' 份' : ''} ${t.price != null ? ' · 点位/价 ' + htmlEscape(t.price) : ''} ${t.note ? ' · ' + htmlEscape(t.note) : ''}</p>
+        <button class="btn-mini btn-del-trade" data-id="${htmlEscape(t.id)}">删除</button>
+      </article>`).join('');
+    box.querySelectorAll('.btn-del-trade').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        await fetch('/api/my-trades/' + encodeURIComponent(btn.dataset.id), { method: 'DELETE' });
+        const summary = await getJSON('/api/summary');
+        renderSignals(summary.signals || [], summary.suppressed_signals || [], summary.decision_memory || null);
+        renderMyTrades();
+      });
+    });
+  } catch (err) {
+    if (meta) meta.textContent = '加载失败';
+    box.innerHTML = `<div class="muted">${htmlEscape(err.message || err)}</div>`;
+  }
 }
 
 function renderRecentActions(actions) {
@@ -254,30 +376,62 @@ function renderEdTalks(data) {
 }
 
 async function init() {
-  const [summary, topics, talks, valuations, calibration] = await Promise.all([
-    getJSON('/api/summary'),
-    getJSON('/api/topics'),
-    getJSON('/api/ed-talks'),
-    getJSON('/api/valuations'),
-    getJSON('/api/calibration').catch(() => null),
-  ]);
-  renderCards(summary);
-  renderRecentActions(summary.recent_actions || []);
-  renderSignals(summary.signals || []);
-  renderValuations(summary.valuation_dashboard || valuations || summary.valuation_rows || []);
-  renderExposure(summary.plan_exposure || {});
-  renderTopics(topics);
-  renderEdTalks(talks);
-  renderCalibration(summary.calibration || calibration);
-  await renderSunburst();
-  await renderCompare();
-  document.getElementById('planSelect').addEventListener('change', event => renderSunburst(event.target.value));
+  // Progressive load: paint overview first, then heavy modules.
+  // Avoid waiting on ed-talks/topics before replacing 读取中…
+  document.getElementById('syncTime').textContent = '加载中…';
+
+  document.getElementById('planSelect')?.addEventListener('change', event => renderSunburst(event.target.value));
   document.getElementById('reasonModalClose')?.addEventListener('click', closeReasonModal);
   document.getElementById('reasonModal')?.addEventListener('click', (event) => {
     if (event.target?.id === 'reasonModal') closeReasonModal();
   });
+
+  let summary = null;
+  try {
+    summary = await getJSON('/api/summary');
+    renderCards(summary);
+    renderRecentActions(summary.recent_actions || []);
+    renderSignals(summary.signals || [], summary.suppressed_signals || [], summary.decision_memory || null);
+    renderValuations(summary.valuation_dashboard || summary.valuation_rows || []);
+    renderExposure(summary.plan_exposure || {});
+    if (summary.calibration) renderCalibration(summary.calibration);
+    renderMyTrades();
+  } catch (err) {
+    const sync = document.getElementById('syncTime');
+    if (sync) sync.textContent = '摘要接口失败';
+    const warn = document.getElementById('freshnessWarning');
+    if (warn) {
+      warn.className = 'freshness-warning show';
+      warn.textContent = '首页摘要加载失败：' + (err && err.message || err);
+    }
+  }
+
+  // secondary modules — independent, non-blocking for first paint
+  const secondary = [
+    getJSON('/api/valuations').then(v => {
+      if (!summary) renderValuations(v);
+    }).catch(() => {}),
+    getJSON('/api/calibration').then(c => {
+      if (!(summary && summary.calibration)) renderCalibration(c);
+    }).catch(() => {}),
+    getJSON('/api/topics').then(renderTopics).catch(err => {
+      const meta = document.getElementById('topicMeta');
+      if (meta) meta.textContent = '主题库加载失败';
+      console.warn('topics', err);
+    }),
+    getJSON('/api/ed-talks?limit=20').then(renderEdTalks).catch(err => {
+      const meta = document.getElementById('edTalkMeta');
+      if (meta) meta.textContent = '发言归档加载失败';
+      console.warn('ed-talks', err);
+    }),
+    renderSunburst().catch(e => console.warn('sunburst', e)),
+    renderCompare().catch(e => console.warn('compare', e)),
+  ];
+  await Promise.allSettled(secondary);
 }
 
 init().catch(error => {
-  document.body.insertAdjacentHTML('beforeend', `<pre>${error.stack}</pre>`);
+  const sync = document.getElementById('syncTime');
+  if (sync) sync.textContent = '加载失败';
+  document.body.insertAdjacentHTML('beforeend', `<pre style="color:#ff6b6b;padding:12px">${error && error.stack || error}</pre>`);
 });

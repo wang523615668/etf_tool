@@ -61,8 +61,12 @@ INDEX_CONFIG: dict[str, dict[str, str]] = {
 PB_ONLY_INDICES = {"中证红利", "红利低波", "红利低波100", "中证银行"}
 HISTORY_YEARS = 5
 REQUEST_GAP = 0.35
+# series files can be reused across many page views; network refresh is daily/cron only
 SERIES_TTL = 24 * 3600
-SNAPSHOT_TTL = 10 * 60
+# homepage must NOT re-hit 理杏仁 every open — serve snapshot forever until forced refresh
+SNAPSHOT_TTL = 7 * 24 * 3600
+# hard stop: web paths pass allow_network=False
+DEFAULT_ALLOW_NETWORK = False
 
 
 def _load_token() -> str:
@@ -143,9 +147,24 @@ def _valuation_action(
     return "watch", "估值中性，等待更好赔率"
 
 
-def fetch_index_series(name: str, force: bool = False, years: int = HISTORY_YEARS) -> list[dict[str, Any]]:
+def fetch_index_series(
+    name: str,
+    force: bool = False,
+    years: int = HISTORY_YEARS,
+    allow_network: bool | None = None,
+) -> list[dict[str, Any]]:
+    """Load index PE/PB/CP series.
+
+    Web/dashboard path should use allow_network=False so page views never burn 理杏仁 token.
+    Network refresh is reserved for cron / explicit force.
+    """
     if name not in INDEX_CONFIG:
         raise KeyError(f"未知指数: {name}")
+    if allow_network is None:
+        allow_network = DEFAULT_ALLOW_NETWORK if not force else True
+    if force:
+        allow_network = True
+
     cfg = INDEX_CONFIG[name]
     code = cfg["code"]
     area = cfg["area"]
@@ -156,7 +175,7 @@ def fetch_index_series(name: str, force: bool = False, years: int = HISTORY_YEAR
 
     cached_rows: list[dict[str, Any]] = []
     fetched_ts = 0.0
-    if path.exists() and not force:
+    if path.exists():
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
             cached_rows = list(payload.get("rows") or [])
@@ -169,20 +188,28 @@ def fetch_index_series(name: str, force: bool = False, years: int = HISTORY_YEAR
     start = (today - timedelta(days=int(years * 365.25) + 30)).isoformat()
     end = today.isoformat()
 
-    # 增量：有缓存时只拉最近一段
+    # Prefer local cache: never network unless explicitly allowed/forced
+    if cached_rows and not force:
+        max_date = max((_normalize_date(r.get("date")) or "" for r in cached_rows), default="")
+        fresh_enough = bool(fetched_ts) and time.time() - fetched_ts < SERIES_TTL and max_date >= (
+            today - timedelta(days=3)
+        ).isoformat()
+        if not allow_network or fresh_enough:
+            return sorted(cached_rows, key=lambda r: r.get("date") or "")
+
+    if not allow_network:
+        # cache-only mode: return whatever we have, never call API
+        return sorted(cached_rows, key=lambda r: r.get("date") or "")
+
+    # incremental network fetch
     if cached_rows and not force:
         last_date = max((_normalize_date(r.get("date")) or "" for r in cached_rows), default="")
         if last_date:
-            # 从 last_date 前 5 天起拉，覆盖可能修正
             try:
                 d0 = datetime.strptime(last_date, "%Y-%m-%d").date() - timedelta(days=5)
                 start = d0.isoformat()
             except Exception:
                 pass
-        # 当天已拉过且最新日足够新，直接返回
-        max_date = max((_normalize_date(r.get("date")) or "" for r in cached_rows), default="")
-        if fetched_ts and time.time() - fetched_ts < SERIES_TTL and max_date >= (today - timedelta(days=3)).isoformat():
-            return sorted(cached_rows, key=lambda r: r.get("date") or "")
 
     token = _load_token()
     url = f"https://open.lixinger.com/api/{area}/index/fundamental"
@@ -205,9 +232,14 @@ def fetch_index_series(name: str, force: bool = False, years: int = HISTORY_YEAR
             detail = raw.decode("utf-8", "replace")[:300]
         except Exception:
             pass
+        # fall back to cache if network fails
+        if cached_rows:
+            return sorted(cached_rows, key=lambda r: r.get("date") or "")
         raise RuntimeError(f"理杏仁请求失败 {code}: HTTP {exc.code} {detail}") from exc
 
     if res.get("code") != 1:
+        if cached_rows:
+            return sorted(cached_rows, key=lambda r: r.get("date") or "")
         raise RuntimeError(f"理杏仁返回失败 {code}: {res}")
 
     new_rows: list[dict[str, Any]] = []
@@ -267,10 +299,24 @@ def fetch_index_series(name: str, force: bool = False, years: int = HISTORY_YEAR
     return rows
 
 
-def get_index_detail(name: str, window_years: float = 5.0) -> dict[str, Any]:
-    rows = fetch_index_series(name, years=max(int(window_years) + 1, 2))
+def get_index_detail(
+    name: str,
+    window_years: float = 5.0,
+    allow_network: bool = False,
+) -> dict[str, Any]:
+    rows = fetch_index_series(
+        name,
+        years=max(int(window_years) + 1, 2),
+        allow_network=allow_network,
+    )
     if not rows:
-        return {"name": name, "rows": [], "latest": None}
+        return {
+            "name": name,
+            "rows": [],
+            "latest": None,
+            "cache_only": not allow_network,
+            "data_mode": "cache_only" if not allow_network else "live",
+        }
     cutoff = (date.today() - timedelta(days=int(window_years * 365.25))).isoformat()
     window = [r for r in rows if (r.get("date") or "") >= cutoff] or rows
     pe_hist = [float(r["pe"]) for r in window if r.get("pe") is not None]
@@ -283,6 +329,8 @@ def get_index_detail(name: str, window_years: float = 5.0) -> dict[str, Any]:
         "code": INDEX_CONFIG[name]["code"],
         "pb_only": name in PB_ONLY_INDICES,
         "window_years": window_years,
+        "cache_only": not allow_network,
+        "data_mode": "cache_only" if not allow_network else "live",
         "latest": {
             **latest,
             "pe_percentile": _percentile(pe_hist, pe if pe is None else float(pe)),
@@ -293,15 +341,60 @@ def get_index_detail(name: str, window_years: float = 5.0) -> dict[str, Any]:
 
 
 def build_valuation_snapshot(
-    names: list[str] | None = None, force: bool = False
+    names: list[str] | None = None,
+    force: bool = False,
+    allow_network: bool | None = None,
 ) -> dict[str, Any]:
+    if allow_network is None:
+        allow_network = True if force else DEFAULT_ALLOW_NETWORK
+    if force:
+        allow_network = True
+
+    # Always prefer snapshot file for web: no network rebuild on page open
     if not force and SNAPSHOT_CACHE.exists():
         try:
             cached = json.loads(SNAPSHOT_CACHE.read_text(encoding="utf-8"))
-            if time.time() - float(cached.get("fetched_ts") or 0) < SNAPSHOT_TTL and cached.get("rows"):
-                return cached["snapshot"]
+            snap = cached.get("snapshot") or {}
+            if snap.get("rows"):
+                age = time.time() - float(cached.get("fetched_ts") or 0)
+                snap = dict(snap)
+                snap["cache_age_seconds"] = int(age)
+                snap["cache_only"] = True
+                snap.setdefault("freshness", {})
+                snap["freshness"] = dict(snap.get("freshness") or {})
+                snap["freshness"]["served_from"] = "local_snapshot"
+                snap["freshness"]["cache_age_seconds"] = int(age)
+                # even if TTL expired, still serve cache when network disallowed
+                if age < SNAPSHOT_TTL or not allow_network:
+                    return snap
         except Exception:
             pass
+
+    if not allow_network:
+        # last-resort empty/stale cache already handled; try one more read
+        if SNAPSHOT_CACHE.exists():
+            try:
+                cached = json.loads(SNAPSHOT_CACHE.read_text(encoding="utf-8"))
+                snap = cached.get("snapshot") or {}
+                if snap.get("rows"):
+                    snap = dict(snap)
+                    snap["cache_only"] = True
+                    snap.setdefault("freshness", {})["served_from"] = "stale_local_snapshot"
+                    return snap
+            except Exception:
+                pass
+        return {
+            "freshness": {
+                "warning": "本地估值缓存缺失，请运行日更脚本刷新（不在网页路径调用理杏仁）",
+                "source": "lixinger_cache_missing",
+            },
+            "total": 0,
+            "counts": {},
+            "top": {"buy": [], "watch": [], "hold": [], "reduce": [], "pause": []},
+            "rows": [],
+            "data_source": "lixinger_cache_missing",
+            "cache_only": True,
+        }
 
     targets = names or list(INDEX_CONFIG.keys())
     rows: list[dict[str, Any]] = []
@@ -309,7 +402,7 @@ def build_valuation_snapshot(
     errors: list[str] = []
     for name in targets:
         try:
-            series = fetch_index_series(name, force=force)
+            series = fetch_index_series(name, force=force, allow_network=True)
             if not series:
                 errors.append(f"{name}: empty")
                 continue
@@ -393,7 +486,8 @@ def build_valuation_snapshot(
         "index_count": len(rows),
         "warning": warning,
         "source": "lixinger",
-        "note": "估值来自理杏仁 Open API，本地计算五年分位；红利类按 PB-only",
+        "served_from": "live_refresh",
+        "note": "估值来自理杏仁 Open API，本地计算五年分位；红利类按 PB-only。网页默认只读缓存。",
         "errors": errors[:8],
     }
     groups = {k: [] for k in ("buy", "watch", "hold", "reduce", "pause")}
@@ -413,6 +507,7 @@ def build_valuation_snapshot(
         "rows": rows,
         "data_source": "lixinger",
         "fetched_at": freshness["snapshot_mtime"],
+        "cache_only": False,
     }
     SNAPSHOT_CACHE.parent.mkdir(parents=True, exist_ok=True)
     SNAPSHOT_CACHE.write_text(
@@ -427,6 +522,7 @@ def build_valuation_snapshot(
 
 if __name__ == "__main__":
     snap = build_valuation_snapshot(force=True)
+    print("rows", snap.get("total"), "date", (snap.get("freshness") or {}).get("snapshot_date"))
     print(json.dumps({
         "total": snap["total"],
         "source": snap["data_source"],

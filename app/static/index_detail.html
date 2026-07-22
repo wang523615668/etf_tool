@@ -4,8 +4,9 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>指数估值详情 · ETF 仪表盘</title>
-  <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
-  <link rel="stylesheet" href="/static/style.css" />
+  <!-- local echarts: avoid jsdelivr hang -->
+  <script src="/static/vendor/echarts.min.js?v=5.5.1"></script>
+  <link rel="stylesheet" href="/static/style.css?v=20260722p" />
   <style>
     .detail-toolbar {
       display: flex;
@@ -45,7 +46,7 @@
     .pb-only-banner.show { display: block; }
     .metric-row {
       display: grid;
-      grid-template-columns: repeat(4, minmax(0, 1fr));
+      grid-template-columns: repeat(6, minmax(0, 1fr));
       gap: 12px;
       margin-bottom: 18px;
     }
@@ -56,7 +57,7 @@
       padding: 14px;
     }
     .metric-card .label { color: #9aa6c7; font-size: 13px; }
-    .metric-card strong { display: block; margin-top: 6px; font-size: 22px; }
+    .metric-card strong { display: block; margin-top: 6px; font-size: 20px; }
     .chart-panel {
       background: #111831;
       border: 1px solid #26304f;
@@ -65,10 +66,84 @@
       margin-bottom: 16px;
     }
     .chart-panel h3 { margin: 0 0 8px; font-size: 16px; }
-    .chart-box { width: 100%; height: 320px; }
-    @media (max-width: 900px) {
-      .metric-row { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-      .chart-box { height: 260px; }
+    .chart-box { width: 100%; height: 340px; }
+    .sub-tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin: 0 0 12px;
+    }
+    .sub-tab {
+      background: #131c35;
+      color: #c9d4f0;
+      border: 1px solid #2d3b63;
+      border-radius: 999px;
+      padding: 6px 12px;
+      cursor: pointer;
+    }
+    .sub-tab.active {
+      background: rgba(105, 210, 255, 0.15);
+      border-color: #69d2ff;
+      color: #e8f7ff;
+    }
+    .knowledge-grid {
+      display: grid;
+      grid-template-columns: 1.2fr 1fr;
+      gap: 14px;
+      margin-bottom: 18px;
+    }
+    .knowledge-panel {
+      background: #111831;
+      border: 1px solid #26304f;
+      border-radius: 16px;
+      padding: 14px;
+      min-height: 220px;
+    }
+    .knowledge-panel h3 {
+      margin: 0 0 10px;
+      font-size: 16px;
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      align-items: center;
+    }
+    .knowledge-panel h3 span { color: #9aa6c7; font-size: 12px; font-weight: 500; }
+    .article-list, .action-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      max-height: 520px;
+      overflow: auto;
+    }
+    .article-item, .action-item {
+      background: #0d1428;
+      border: 1px solid #243156;
+      border-radius: 12px;
+      padding: 10px 12px;
+    }
+    .article-item .meta, .action-item .meta {
+      color: #8fa0c5;
+      font-size: 12px;
+      margin-bottom: 4px;
+    }
+    .article-item a, .action-item a {
+      color: #9ad7ff;
+      text-decoration: none;
+      font-weight: 600;
+    }
+    .article-item p, .action-item p {
+      margin: 6px 0 0;
+      color: #b8c3e0;
+      font-size: 13px;
+      line-height: 1.45;
+    }
+    .tag-buy { color: #18c37e; }
+    .tag-sell { color: #ff6b6b; }
+    .empty-hint { color: #8fa0c5; font-size: 13px; }
+    @media (max-width: 1000px) {
+      .metric-row { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .knowledge-grid { grid-template-columns: 1fr; }
+      .chart-box { height: 280px; }
     }
   </style>
 </head>
@@ -79,13 +154,14 @@
     <a href="/#valuation">估值温度计</a>
     <a href="/#signals">买卖提醒</a>
     <a href="/#calibration">规则校准池</a>
-    <a href="/index-detail" style="border-top:1px solid #2d3148;margin-top:8px;padding-top:8px;color:#f59e0b">📊 指数估值详情</a>
+    <a href="/#topics">主题知识库</a>
+    <a href="/index-detail?t=20260722p" style="border-top:1px solid #2d3148;margin-top:8px;padding-top:8px;color:#f59e0b">📊 指数估值详情</a>
   </aside>
   <main class="main">
     <section class="hero">
       <div>
         <h1 id="pageTitle">指数估值详情</h1>
-        <p>理杏仁 Open API 历史序列 + 本地五年分位。红利/银行类默认 PB 优先。</p>
+        <p>理杏仁估值走势 + 长赢150买卖点标记 + 且慢/ChinaETFS 相关文章。点每个指数看完整信息。</p>
       </div>
       <div class="hero-card">
         <div class="muted">当前指数</div>
@@ -115,6 +191,10 @@
     <div id="metricRow" class="metric-row"></div>
 
     <section class="chart-panel">
+      <h3>指数点位 · 长赢150买卖点</h3>
+      <div id="cpChart" class="chart-box"></div>
+    </section>
+    <section class="chart-panel">
       <h3>PE 历史</h3>
       <div id="peChart" class="chart-box"></div>
     </section>
@@ -122,13 +202,26 @@
       <h3>PB 历史</h3>
       <div id="pbChart" class="chart-box"></div>
     </section>
-    <section class="chart-panel">
-      <h3>指数点位</h3>
-      <div id="cpChart" class="chart-box"></div>
-    </section>
+
+    <div class="knowledge-grid">
+      <section class="knowledge-panel">
+        <h3>相关文章 <span id="articleMeta">—</span></h3>
+        <div class="sub-tabs" id="articleSourceTabs"></div>
+        <div id="articleList" class="article-list"></div>
+      </section>
+      <section class="knowledge-panel">
+        <h3>长赢150买卖 <span id="actionMeta">—</span></h3>
+        <div class="sub-tabs" id="actionSideTabs"></div>
+        <div id="actionList" class="action-list"></div>
+      </section>
+    </div>
   </main>
 
   <script>
+    let lastDetail = null;
+    let articleSourceFilter = 'all';
+    let actionSideFilter = 'all';
+
     function esc(v) {
       return String(v ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
     }
@@ -152,8 +245,9 @@
       if (location.hash !== next) history.replaceState(null, '', next);
     }
     function makeChart(el) {
+      if (typeof echarts === 'undefined' || !el) return null;
       const chart = echarts.init(el);
-      window.addEventListener('resize', () => chart.resize());
+      window.addEventListener('resize', () => chart && chart.resize());
       return chart;
     }
     const charts = {
@@ -161,42 +255,177 @@
       pb: makeChart(document.getElementById('pbChart')),
       cp: makeChart(document.getElementById('cpChart')),
     };
-    function lineOption(title, dates, values, color) {
+
+    function lineOption(title, dates, values, color, markPoints) {
+      const series = [{
+        name: title,
+        type: 'line',
+        showSymbol: false,
+        data: values,
+        lineStyle: { width: 2, color },
+        areaStyle: { color: color + '22' },
+        itemStyle: { color },
+      }];
+      if (markPoints && markPoints.length) {
+        series[0].markPoint = {
+          symbol: 'circle',
+          symbolSize: 8,
+          label: { show: false },
+          data: markPoints,
+        };
+      }
       return {
         backgroundColor: 'transparent',
-        grid: { left: 48, right: 18, top: 28, bottom: 40 },
+        grid: { left: 48, right: 18, top: 36, bottom: 48 },
         tooltip: { trigger: 'axis' },
+        dataZoom: [
+          { type: 'inside', xAxisIndex: 0 },
+          { type: 'slider', height: 18, bottom: 8, borderColor: '#2d3b63', fillerColor: 'rgba(105,210,255,0.12)' },
+        ],
         xAxis: { type: 'category', data: dates, axisLabel: { color: '#9aa6c7' }, axisLine: { lineStyle: { color: '#2d3b63' } } },
         yAxis: { type: 'value', scale: true, axisLabel: { color: '#9aa6c7' }, splitLine: { lineStyle: { color: '#1b2544' } } },
-        series: [{
-          name: title,
-          type: 'line',
-          showSymbol: false,
-          data: values,
-          lineStyle: { width: 2, color },
-          areaStyle: { color: color + '22' },
-          itemStyle: { color },
-        }],
+        series,
       };
     }
+
+    function buildCpMarkPoints(detail) {
+      const rows = detail.rows || [];
+      const dateIndex = new Map(rows.map((r, i) => [String(r.date || '').slice(0, 10), i]));
+      const marks = detail.marks || [];
+      // group same day+side → one small point
+      const grouped = new Map();
+      for (const m of marks) {
+        const day = String(m.date || '').slice(0, 10);
+        const side = m.side || m.action || '';
+        if (!day || !dateIndex.has(day)) continue;
+        const key = day + '|' + side;
+        const g = grouped.get(key) || { day, side, count: 0, shares: 0, names: [], url: m.url };
+        g.count += 1;
+        g.shares += Number(m.shares || 0) || 0;
+        if (m.name && g.names.length < 3) g.names.push(m.name);
+        if (!g.url && m.url) g.url = m.url;
+        grouped.set(key, g);
+      }
+      const out = [];
+      for (const g of grouped.values()) {
+        const idx = dateIndex.get(g.day);
+        const isBuy = g.side === 'buy';
+        const color = isBuy ? '#18c37e' : '#ff6b6b';
+        const y = rows[idx] && rows[idx].cp != null ? Number(rows[idx].cp) : null;
+        out.push({
+          name: isBuy ? '买' : '卖',
+          coord: y == null ? [idx, 0] : [g.day, y],
+          value: g.count,
+          itemStyle: { color, borderColor: '#0b1020', borderWidth: 1 },
+          symbol: 'circle',
+          symbolSize: g.count > 1 ? 10 : 8,
+          symbolOffset: isBuy ? [0, 0] : [0, 0],
+          label: { show: false },
+          tooltip: {
+            formatter: () => `${g.day}<br/>${isBuy ? '买入' : '卖出'} ${g.count} 笔`
+              + (g.shares ? ` · 合计 ${g.shares} 份` : '')
+              + (g.names.length ? `<br/>${g.names.join(' / ')}` : ''),
+          },
+        });
+      }
+      return out;
+    }
+
     function renderMetrics(detail) {
       const latest = detail.latest || {};
       document.getElementById('metricRow').innerHTML = `
         <div class="metric-card"><div class="label">最新日期</div><strong>${esc(latest.date || '-')}</strong></div>
         <div class="metric-card"><div class="label">PE / 分位</div><strong>${num(latest.pe)} · ${pct(latest.pe_percentile)}</strong></div>
         <div class="metric-card"><div class="label">PB / 分位</div><strong>${num(latest.pb)} · ${pct(latest.pb_percentile)}</strong></div>
-        <div class="metric-card"><div class="label">点位</div><strong>${num(latest.cp, 2)}</strong></div>`;
+        <div class="metric-card"><div class="label">点位</div><strong>${num(latest.cp, 2)}</strong></div>
+        <div class="metric-card"><div class="label">相关文章</div><strong>${detail.article_count || (detail.articles || []).length || 0}</strong></div>
+        <div class="metric-card"><div class="label">长赢150买卖</div><strong class="tag-buy">${detail.buy_count || 0}买</strong><span style="color:#8fa0c5"> / </span><strong class="tag-sell">${detail.sell_count || 0}卖</strong></div>`;
       document.getElementById('pbOnlyBanner').classList.toggle('show', !!detail.pb_only);
       document.getElementById('currentName').textContent = `${detail.name || '-'} · ${detail.code || ''}`;
-      document.getElementById('pageTitle').textContent = `${detail.name || '指数'} 估值详情`;
+      document.getElementById('pageTitle').textContent = `${detail.name || '指数'} 详情`;
     }
+
     function renderCharts(detail) {
+      if (typeof echarts === 'undefined') {
+        document.getElementById('errorBox').className = 'freshness-warning show';
+        document.getElementById('errorBox').textContent = '图表库未加载（echarts），文字数据仍可看列表';
+        return;
+      }
       const rows = detail.rows || [];
       const dates = rows.map(r => r.date);
-      charts.pe.setOption(lineOption('PE', dates, rows.map(r => r.pe), '#69d2ff'), true);
-      charts.pb.setOption(lineOption('PB', dates, rows.map(r => r.pb), '#18c37e'), true);
-      charts.cp.setOption(lineOption('点位', dates, rows.map(r => r.cp), '#ffd166'), true);
+      const cpMarks = buildCpMarkPoints(detail);
+      if (charts.cp) charts.cp.setOption(lineOption('点位', dates, rows.map(r => r.cp), '#ffd166', cpMarks), true);
+      if (charts.pe) charts.pe.setOption(lineOption('PE', dates, rows.map(r => r.pe), '#69d2ff'), true);
+      if (charts.pb) charts.pb.setOption(lineOption('PB', dates, rows.map(r => r.pb), '#18c37e'), true);
     }
+
+    function renderArticles(detail) {
+      const articles = detail.articles || [];
+      const sources = Array.from(new Set(articles.map(a => a.source || 'other')));
+      const tabs = document.getElementById('articleSourceTabs');
+      const allCount = articles.length;
+      const tabHtml = [`<button class="sub-tab ${articleSourceFilter === 'all' ? 'active' : ''}" data-src="all">全部 ${allCount}</button>`]
+        .concat(sources.map(s => {
+          const c = articles.filter(a => (a.source || 'other') === s).length;
+          return `<button class="sub-tab ${articleSourceFilter === s ? 'active' : ''}" data-src="${esc(s)}">${esc(s)} ${c}</button>`;
+        })).join('');
+      tabs.innerHTML = tabHtml;
+      tabs.querySelectorAll('.sub-tab').forEach(btn => {
+        btn.onclick = () => {
+          articleSourceFilter = btn.dataset.src;
+          renderArticles(detail);
+        };
+      });
+      const filtered = articles.filter(a => articleSourceFilter === 'all' || (a.source || 'other') === articleSourceFilter);
+      document.getElementById('articleMeta').textContent = `${filtered.length} 篇 · 知识库 ${esc((detail.knowledge_generated_at || '').replace('T', ' ').slice(0, 16) || '-')}`;
+      const list = document.getElementById('articleList');
+      if (!filtered.length) {
+        list.innerHTML = '<div class="empty-hint">暂无匹配文章（可换窗口或等知识库重建）</div>';
+        return;
+      }
+      list.innerHTML = filtered.map(a => `
+        <article class="article-item">
+          <div class="meta">${esc(a.source || '-')} · ${esc(a.date || '无日期')} · ${esc((a.keywords || []).slice(0, 4).join(' / ') || a.id || '')}</div>
+          <a href="${esc(a.url || '#')}" target="_blank" rel="noopener">${esc(a.title || '未命名')}</a>
+          <p>${esc(a.excerpt || a.operation_reason || '')}</p>
+        </article>`).join('');
+    }
+
+    function renderActions(detail) {
+      const actions = detail.actions || [];
+      const tabs = document.getElementById('actionSideTabs');
+      const buyN = actions.filter(a => a.action === 'buy').length;
+      const sellN = actions.filter(a => a.action === 'sell').length;
+      tabs.innerHTML = `
+        <button class="sub-tab ${actionSideFilter === 'all' ? 'active' : ''}" data-side="all">全部 ${actions.length}</button>
+        <button class="sub-tab ${actionSideFilter === 'buy' ? 'active' : ''}" data-side="buy">买入 ${buyN}</button>
+        <button class="sub-tab ${actionSideFilter === 'sell' ? 'active' : ''}" data-side="sell">卖出 ${sellN}</button>`;
+      tabs.querySelectorAll('.sub-tab').forEach(btn => {
+        btn.onclick = () => {
+          actionSideFilter = btn.dataset.side;
+          renderActions(detail);
+        };
+      });
+      const filtered = actions.filter(a => actionSideFilter === 'all' || a.action === actionSideFilter);
+      document.getElementById('actionMeta').textContent = `${filtered.length} 条 · 图上标记 ${ (detail.marks || []).length } 点`;
+      const list = document.getElementById('actionList');
+      if (!filtered.length) {
+        list.innerHTML = '<div class="empty-hint">当前窗口内暂无长赢150买卖记录</div>';
+        return;
+      }
+      list.innerHTML = filtered.map(a => {
+        const side = a.action === 'buy' ? '买入' : '卖出';
+        const cls = a.action === 'buy' ? 'tag-buy' : 'tag-sell';
+        const link = a.url ? `<a href="${esc(a.url)}" target="_blank" rel="noopener">原文</a>` : '';
+        return `
+        <div class="action-item">
+          <div class="meta"><span class="${cls}">${side}</span> · ${esc(a.date || '-')} · ${esc(a.plan || '')} · ${esc(a.shares != null ? a.shares + '份' : '')}</div>
+          <div>${esc(a.name || '-')} <span class="meta">(${esc(a.code || '')})</span> ${link}</div>
+          <p>${esc(a.category || '')}</p>
+        </div>`;
+      }).join('');
+    }
+
     async function loadList() {
       const data = await getJSON('/api/index-list');
       const select = document.getElementById('indexSelect');
@@ -206,23 +435,30 @@
       if ([...select.options].some(o => o.value === preferred)) select.value = preferred;
       return select.value;
     }
+
     async function loadDetail() {
       const name = document.getElementById('indexSelect').value;
       const years = document.getElementById('windowSelect').value || '5';
       const box = document.getElementById('errorBox');
       box.className = 'freshness-warning';
       box.textContent = '';
+      articleSourceFilter = 'all';
+      actionSideFilter = 'all';
       try {
         const detail = await getJSON(`/api/index/${encodeURIComponent(name)}?window_years=${years}`);
         if (detail.error) throw new Error(detail.error);
+        lastDetail = detail;
         setHash(name);
         renderMetrics(detail);
         renderCharts(detail);
+        renderArticles(detail);
+        renderActions(detail);
       } catch (err) {
         box.className = 'freshness-warning show';
         box.textContent = '加载失败：' + (err.message || err);
       }
     }
+
     async function boot() {
       await loadList();
       await loadDetail();
