@@ -17,12 +17,13 @@ MY_TRADES = DATA / "my_trades.json"
 
 DEFAULT_SETTINGS = {
     # after a personal buy, suppress same-direction buy for N calendar days
-    "buy_cooldown_days": 3,
-    # re-open buy only if price fell this much from entry (0.03 = 3%)
-    "buy_drop_resume_pct": 0.03,
+    # 30 days ≈ 1 month (time OR space)
+    "buy_cooldown_days": 30,
+    # re-open buy only if price fell this much from entry (0.10 = 10%)
+    "buy_drop_resume_pct": 0.10,
     # after a personal sell/reduce, suppress same-direction reduce for N days
-    "sell_cooldown_days": 2,
-    "sell_rise_resume_pct": 0.03,
+    "sell_cooldown_days": 30,
+    "sell_rise_resume_pct": 0.10,
     # match by name / code / category
     "match_by_category": True,
 }
@@ -163,14 +164,15 @@ def cooldown_status_for_signal(
         if time_ok or space_ok:
             return None
         remain = max(cool_days - days_since, 0)
-        reason = (
-            f"你已在 {trade.get('date')} 买入{trade.get('name') or trade.get('category') or ''}；"
-            f"冷却还剩约 {remain} 天"
-        )
-        if drop_pct is not None:
+        name = trade.get("name") or trade.get("category") or ""
+        reason = f"你已在 {trade.get('date')} 买入{name}；冷却还剩约 {remain} 天"
+        if drop_pct is None:
+            reason += f"（无有效点位时仅按时间冷却；有点位且再跌 ≥{drop_need*100:.0f}% 可提前恢复）"
+        elif drop_pct >= 0:
             reason += f"（距买入点跌幅 {drop_pct*100:.1f}% < 再买入阈值 {drop_need*100:.0f}%）"
         else:
-            reason += f"（或较买入点再跌 ≥{drop_need*100:.0f}% 可提前恢复）"
+            # price up or scale mismatch — do not show absurd negative "跌幅"
+            reason += f"（当前点位未低于买入点；再跌 ≥{drop_need*100:.0f}% 或满 {cool_days} 天可恢复）"
         return {
             "active": True,
             "kind": "buy_cooldown",

@@ -230,6 +230,44 @@ select {
 .signal.buy,
 .action-card.buy { border-color: rgba(24, 195, 126, 0.4); }
 
+.signal.cooldown {
+  opacity: 0.72;
+  border-style: dashed;
+}
+.suppressed-list {
+  margin-top: 12px;
+}
+.cooldown-title {
+  grid-column: 1 / -1;
+  color: #ffd166;
+  font-size: 13px;
+  margin: 4px 0 2px;
+}
+.signal-actions {
+  margin-top: 10px;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.btn-mini {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: #1a2340;
+  color: #e8ecff;
+  border-radius: 999px;
+  padding: 6px 12px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.btn-mini:hover { border-color: #69d2ff; color: #69d2ff; }
+.btn-mini:disabled { opacity: 0.6; cursor: default; }
+.btn-buy-done { border-color: rgba(24,195,126,.45); color: #18c37e; }
+.btn-sell-done { border-color: rgba(255,107,107,.45); color: #ff6b6b; }
+.empty-hint {
+  color: #8fa0c5;
+  padding: 12px 4px;
+}
+
 .valuation-card.reduce,
 .signal.sell,
 .signal.reduce,

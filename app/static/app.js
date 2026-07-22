@@ -186,7 +186,7 @@ async function renderMyTrades() {
     const trades = data.trades || [];
     const st = data.settings || {};
     if (meta) {
-      meta.textContent = `${trades.length} 条 · 买冷却${st.buy_cooldown_days ?? 3}天/跌${Math.round((st.buy_drop_resume_pct || 0.03) * 100)}%恢复`;
+      meta.textContent = `${trades.length} 条 · 买冷却${st.buy_cooldown_days ?? 30}天/跌${Math.round((st.buy_drop_resume_pct || 0.10) * 100)}%恢复`;
     }
     if (!trades.length) {
       box.innerHTML = '<div class="muted">还没有个人成交记录。收到买入提醒并实际买入后，点「我已买入」。</div>';

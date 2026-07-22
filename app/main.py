@@ -7,7 +7,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import Body, FastAPI
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -696,7 +696,6 @@ def index_detail_page() -> str:
         return "<h1>index detail page missing</h1>"
     return page.read_text(encoding="utf-8")
 
-
 @app.get("/api/summary")
 def api_summary() -> dict[str, Any]:
     long_win = load_json("long_win_positions.json")
@@ -705,24 +704,36 @@ def api_summary() -> dict[str, Any]:
     reasons = reason_by_url()
     by_date = reason_by_date()
     # personal execution memory: suppress re-buy after you already bought
-    filtered = apply_execution_filter(list(signals.get("signals") or []))
-    # attach latest cp from valuation cache so space-rule can work on next opens
+    # merge previously suppressed so cooldown status can be recomputed each request
+    raw_signals = []
+    seen_keys = set()
+    for s in list(signals.get("signals") or []) + list(signals.get("suppressed_signals") or []):
+        key = (str(s.get("action") or ""), str(s.get("name") or ""), str(s.get("code") or "")
+        )
+        if key in seen_keys:
+            continue
+        seen_keys.add(key)
+        # strip stale cooldown fields; recompute below
+        row = {k: v for k, v in dict(s).items() if k not in {"status", "cooldown"}}
+        raw_signals.append(row)
+
+    # attach latest cp from valuation cache so space-rule can work
     cp_by_name = {r.get("name"): r.get("cp") for r in (valuation.get("rows") or []) if r.get("name")}
     cp_by_code = {
         str(r.get("code") or "").split(".")[0]: r.get("cp")
         for r in (valuation.get("rows") or [])
         if r.get("code")
     }
-    active = []
-    for s in filtered["signals"]:
+    priced = []
+    for s in raw_signals:
         row = dict(s)
         code = str(row.get("code") or "").split(".")[0]
         if row.get("cp") is None:
             row["cp"] = cp_by_name.get(row.get("name")) or cp_by_code.get(code)
-        active.append(row)
-    # re-filter once with prices filled (space resume)
-    filtered2 = apply_execution_filter(active)
-    suppressed = filtered2.get("suppressed_signals") or filtered.get("suppressed_signals") or []
+        priced.append(row)
+    filtered = apply_execution_filter(priced)
+    suppressed = filtered.get("suppressed_signals") or []
+    active = filtered.get("signals") or []
     return {
         "generated_at": long_win.get("generated_at"),
         "data_source": valuation.get("data_source") or long_win.get("source") or "local",
@@ -735,12 +746,12 @@ def api_summary() -> dict[str, Any]:
         "recent_actions": [
             enrich_action_reason(action, reasons, by_date) for action in signals.get("ed_actions", [])[:12]
         ],
-        "signals": filtered2.get("signals") or active,
+        "signals": active,
         "suppressed_signals": suppressed,
         "decision_memory": {
-            "settings": filtered2.get("settings"),
-            "my_trade_count": filtered2.get("my_trade_count"),
-            "rule": "买入后默认冷却3天；或较买入点再跌≥3%才恢复同向买入（时间或空间二选一）",
+            "settings": filtered.get("settings"),
+            "my_trade_count": filtered.get("my_trade_count"),
+            "rule": "买入后默认冷却30天（约1个月）；或较买入点再跌≥10%才恢复同向买入（时间或空间二选一）",
         },
         "valuation_freshness": valuation.get("freshness") or valuation_freshness(),
         "valuation_rows": (valuation.get("rows") or [])[:12],
@@ -759,7 +770,7 @@ def api_my_trades() -> dict[str, Any]:
 
 
 @app.post("/api/my-trades")
-def api_my_trades_add(body: dict[str, Any]) -> dict[str, Any]:
+def api_my_trades_add(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
     try:
         return add_trade(body or {})
     except Exception as exc:
@@ -772,7 +783,7 @@ def api_my_trades_delete(trade_id: str) -> dict[str, Any]:
 
 
 @app.post("/api/my-trades/settings")
-def api_my_trades_settings(body: dict[str, Any]) -> dict[str, Any]:
+def api_my_trades_settings(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
     return update_my_trade_settings(body or {})
 
 
