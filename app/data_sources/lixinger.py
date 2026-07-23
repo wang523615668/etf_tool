@@ -59,8 +59,13 @@ INDEX_CONFIG: dict[str, dict[str, str]] = {
 
 # 红利类 PE 失真，温度只用 PB
 PB_ONLY_INDICES = {"中证红利", "红利低波", "红利低波100", "中证银行"}
-HISTORY_YEARS = 5
+# 本地序列尽量拉 20 年；指数成立不足 20 年时以实际可取最长历史为准。
+# 分位默认仍用近 5 年（首页温度计），详情页按 UI 窗口切。
+HISTORY_YEARS = 20
+PERCENTILE_YEARS = 5
 REQUEST_GAP = 0.35
+# 理杏仁对超长区间可能 403，分块拉取
+FETCH_CHUNK_DAYS = 730
 # series files can be reused across many page views; network refresh is daily/cron only
 SERIES_TTL = 24 * 3600
 # homepage must NOT re-hit 理杏仁 every open — serve snapshot forever until forced refresh
@@ -213,56 +218,85 @@ def fetch_index_series(
 
     token = _load_token()
     url = f"https://open.lixinger.com/api/{area}/index/fundamental"
-    body = {
-        "token": token,
-        "startDate": start,
-        "endDate": end,
-        "stockCodes": [code],
-        "metricsList": [pe_key, pb_key, "cp"],
-    }
-    time.sleep(REQUEST_GAP)
+    # chunked fetch — long ranges may 403
     try:
-        res = _post(url, body)
-    except urllib.error.HTTPError as exc:
-        detail = ""
-        try:
-            raw = exc.read()
-            if raw[:2] == b"\x1f\x8b":
-                raw = gzip.decompress(raw)
-            detail = raw.decode("utf-8", "replace")[:300]
-        except Exception:
-            pass
-        # fall back to cache if network fails
-        if cached_rows:
-            return sorted(cached_rows, key=lambda r: r.get("date") or "")
-        raise RuntimeError(f"理杏仁请求失败 {code}: HTTP {exc.code} {detail}") from exc
-
-    if res.get("code") != 1:
-        if cached_rows:
-            return sorted(cached_rows, key=lambda r: r.get("date") or "")
-        raise RuntimeError(f"理杏仁返回失败 {code}: {res}")
+        start_d = datetime.strptime(start, "%Y-%m-%d").date()
+        end_d = datetime.strptime(end, "%Y-%m-%d").date()
+    except Exception:
+        start_d = today - timedelta(days=int(years * 365.25) + 30)
+        end_d = today
 
     new_rows: list[dict[str, Any]] = []
-    for item in res.get("data") or []:
-        d = _normalize_date(item.get("date"))
-        if not d:
+    cur = start_d
+    last_err: Exception | None = None
+    while cur <= end_d:
+        chunk_end = min(cur + timedelta(days=FETCH_CHUNK_DAYS), end_d)
+        body = {
+            "token": token,
+            "startDate": cur.isoformat(),
+            "endDate": chunk_end.isoformat(),
+            "stockCodes": [code],
+            "metricsList": [pe_key, pb_key, "cp"],
+        }
+        time.sleep(REQUEST_GAP)
+        try:
+            res = _post(url, body)
+        except urllib.error.HTTPError as exc:
+            detail = ""
+            try:
+                raw = exc.read()
+                if raw[:2] == b"\x1f\x8b":
+                    raw = gzip.decompress(raw)
+                detail = raw.decode("utf-8", "replace")[:300]
+            except Exception:
+                pass
+            last_err = RuntimeError(f"理杏仁请求失败 {code}: HTTP {exc.code} {detail}")
+            # shrink chunk and retry once
+            if chunk_end > cur + timedelta(days=120):
+                chunk_end = cur + timedelta(days=365)
+                body["endDate"] = chunk_end.isoformat()
+                time.sleep(REQUEST_GAP)
+                try:
+                    res = _post(url, body)
+                except Exception as exc2:
+                    last_err = exc2  # type: ignore[assignment]
+                    cur = chunk_end + timedelta(days=1)
+                    continue
+            else:
+                cur = chunk_end + timedelta(days=1)
+                continue
+
+        if res.get("code") != 1:
+            last_err = RuntimeError(f"理杏仁返回失败 {code}: {res}")
+            cur = chunk_end + timedelta(days=1)
             continue
-        pe = item.get(pe_key)
-        pb = item.get(pb_key)
-        cp = item.get("cp")
-        try:
-            pe = float(pe) if pe not in (None, "") else None
-        except Exception:
-            pe = None
-        try:
-            pb = float(pb) if pb not in (None, "") else None
-        except Exception:
-            pb = None
-        try:
-            cp = float(cp) if cp not in (None, "") else None
-        except Exception:
-            cp = None
-        new_rows.append({"date": d, "pe": pe, "pb": pb, "cp": cp, "code": code, "name": name})
+
+        for item in res.get("data") or []:
+            d = _normalize_date(item.get("date"))
+            if not d:
+                continue
+            pe = item.get(pe_key)
+            pb = item.get(pb_key)
+            cp = item.get("cp")
+            try:
+                pe = float(pe) if pe not in (None, "") else None
+            except Exception:
+                pe = None
+            try:
+                pb = float(pb) if pb not in (None, "") else None
+            except Exception:
+                pb = None
+            try:
+                cp = float(cp) if cp not in (None, "") else None
+            except Exception:
+                cp = None
+            new_rows.append({"date": d, "pe": pe, "pb": pb, "cp": cp, "code": code, "name": name})
+        cur = chunk_end + timedelta(days=1)
+
+    if not new_rows and not cached_rows:
+        if last_err:
+            raise last_err
+        raise RuntimeError(f"理杏仁无数据 {code}")
 
     by_date: dict[str, dict[str, Any]] = {}
     for row in cached_rows + new_rows:
@@ -278,7 +312,7 @@ def fetch_index_series(
             "name": name,
         }
     rows = [by_date[k] for k in sorted(by_date.keys())]
-    # 只保留 years 窗口
+    # 只保留 years 窗口（默认 12 年，覆盖长赢买卖点）
     cutoff = (today - timedelta(days=int(years * 365.25))).isoformat()
     rows = [r for r in rows if (r.get("date") or "") >= cutoff]
 
@@ -301,12 +335,13 @@ def fetch_index_series(
 
 def get_index_detail(
     name: str,
-    window_years: float = 5.0,
+    window_years: float = 20.0,
     allow_network: bool = False,
 ) -> dict[str, Any]:
+    # keep long series for marks; percentile window follows UI window
     rows = fetch_index_series(
         name,
-        years=max(int(window_years) + 1, 2),
+        years=max(int(window_years) + 1, int(HISTORY_YEARS)),
         allow_network=allow_network,
     )
     if not rows:
@@ -316,9 +351,24 @@ def get_index_detail(
             "latest": None,
             "cache_only": not allow_network,
             "data_mode": "cache_only" if not allow_network else "live",
+            "available_years": 0,
+            "available_start": None,
+            "available_end": None,
         }
-    cutoff = (date.today() - timedelta(days=int(window_years * 365.25))).isoformat()
+    full_start = rows[0].get("date")
+    full_end = rows[-1].get("date")
+    available_years = None
+    try:
+        d0 = datetime.strptime(str(full_start)[:10], "%Y-%m-%d").date()
+        d1 = datetime.strptime(str(full_end)[:10], "%Y-%m-%d").date()
+        available_years = round((d1 - d0).days / 365.25, 2)
+    except Exception:
+        available_years = None
+
+    # window_years > available → use full actual history
+    cutoff = (date.today() - timedelta(days=int(float(window_years) * 365.25))).isoformat()
     window = [r for r in rows if (r.get("date") or "") >= cutoff] or rows
+    # percentile hist uses same UI window (user selected 3/5/10/20y, capped by actual)
     pe_hist = [float(r["pe"]) for r in window if r.get("pe") is not None]
     pb_hist = [float(r["pb"]) for r in window if r.get("pb") is not None]
     latest = window[-1]
@@ -329,6 +379,12 @@ def get_index_detail(
         "code": INDEX_CONFIG[name]["code"],
         "pb_only": name in PB_ONLY_INDICES,
         "window_years": window_years,
+        "requested_window_years": window_years,
+        "available_years": available_years,
+        "available_start": full_start,
+        "available_end": full_end,
+        "effective_start": window[0].get("date") if window else None,
+        "effective_end": window[-1].get("date") if window else None,
         "cache_only": not allow_network,
         "data_mode": "cache_only" if not allow_network else "live",
         "latest": {
@@ -406,8 +462,8 @@ def build_valuation_snapshot(
             if not series:
                 errors.append(f"{name}: empty")
                 continue
-            # 用近 5 年分位
-            cutoff = (date.today() - timedelta(days=int(HISTORY_YEARS * 365.25))).isoformat()
+            # 分位用近 PERCENTILE_YEARS（默认5年）；序列本身可更长
+            cutoff = (date.today() - timedelta(days=int(PERCENTILE_YEARS * 365.25))).isoformat()
             window = [r for r in series if (r.get("date") or "") >= cutoff] or series
             latest = window[-1]
             pe = latest.get("pe")

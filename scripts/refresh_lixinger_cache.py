@@ -24,7 +24,7 @@ def main() -> int:
     fail = 0
     for name in INDEX_CONFIG:
         try:
-            rows = fetch_index_series(name, force=force, allow_network=True)
+            rows = fetch_index_series(name, force=force, years=20, allow_network=True)
             print(f"  series {name}: {len(rows)} rows", flush=True)
             ok += 1
         except Exception as exc:

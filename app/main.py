@@ -926,7 +926,7 @@ def api_index_list() -> dict[str, Any]:
 
 
 @app.get("/api/index/{name}")
-def api_index_detail(name: str, window_years: float = 5.0) -> dict[str, Any]:
+def api_index_detail(name: str, window_years: float = 20.0) -> dict[str, Any]:
     if name not in LIXINGER_INDEX_CONFIG:
         # allow code lookup
         for n, cfg in LIXINGER_INDEX_CONFIG.items():
@@ -958,25 +958,27 @@ def api_index_detail(name: str, window_years: float = 5.0) -> dict[str, Any]:
             date_to_cp[d] = None
     date_set = set(dates)
     marks_out = []
+    marks_outside = 0
     for m in knowledge.get("marks") or []:
         day = str(m.get("date") or "")[:10]
         if not day:
             continue
         # if exact trading day missing, keep mark only when inside window range
         if dates and (day < dates[0] or day > dates[-1]):
+            marks_outside += 1
             continue
         cp = date_to_cp.get(day)
-        if cp is None and day not in date_set and dates:
-            # nearest previous trading day
+        day_use = day
+        if day not in date_set and dates:
+            # nearest previous trading day; if none, next
             prev = [d for d in dates if d <= day]
+            nxt = [d for d in dates if d >= day]
             if prev:
                 day_use = prev[-1]
-                cp = date_to_cp.get(day_use)
-            else:
-                day_use = day
-        else:
-            day_use = day
-        marks_out.append({**m, "date": day_use, "cp": cp})
+            elif nxt:
+                day_use = nxt[0]
+            cp = date_to_cp.get(day_use)
+        marks_out.append({**m, "date": day_use, "cp": cp, "orig_date": day})
     detail["articles"] = knowledge.get("articles") or []
     detail["actions"] = knowledge.get("actions") or []
     detail["marks"] = marks_out
@@ -984,6 +986,8 @@ def api_index_detail(name: str, window_years: float = 5.0) -> dict[str, Any]:
     detail["action_count"] = knowledge.get("action_count") or len(detail["actions"])
     detail["buy_count"] = knowledge.get("buy_count") or 0
     detail["sell_count"] = knowledge.get("sell_count") or 0
+    detail["marks_visible"] = len(marks_out)
+    detail["marks_outside_window"] = marks_outside
     detail["knowledge_generated_at"] = knowledge.get("knowledge_generated_at")
     detail["knowledge_keywords"] = knowledge.get("keywords") or []
     detail["plan_filter"] = knowledge.get("plan_filter") or "long_win_150"
