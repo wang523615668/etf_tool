@@ -27,6 +27,13 @@ from app.decision_memory import (
     load_my_trades,
     update_settings as update_my_trade_settings,
 )
+from app.account_ledger import (
+    action_sheet,
+    format_daily_push,
+    ledger_snapshot,
+    load_account,
+    save_account,
+)
 
 BASE = Path(__file__).resolve().parents[1]
 DATA = BASE / "data"
@@ -761,6 +768,74 @@ def api_summary() -> dict[str, Any]:
         "topic_library": {
             key: value for key, value in topic_library(limit_per_topic=0).items() if key != "topics"
         },
+        "ledger": ledger_snapshot(valuation.get("rows") or []),
+        "action_sheet": action_sheet(
+            signals=active,
+            suppressed=suppressed,
+            valuation_rows=valuation.get("rows") or [],
+        ),
+    }
+
+
+@app.get("/api/ledger")
+def api_ledger() -> dict[str, Any]:
+    valuation = valuation_dashboard()
+    return ledger_snapshot(valuation.get("rows") or [])
+
+
+@app.get("/api/account")
+def api_account_get() -> dict[str, Any]:
+    return load_account()
+
+
+@app.post("/api/account")
+def api_account_set(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    try:
+        return {"ok": True, "account": save_account(body or {})}
+    except Exception as exc:
+        return {"ok": False, "error": str(exc)}
+
+
+@app.get("/api/action-sheet")
+def api_action_sheet() -> dict[str, Any]:
+    valuation = valuation_dashboard()
+    long_win = load_json("long_win_positions.json")
+    signals = load_json("signals.json")
+    raw_signals = []
+    seen = set()
+    for s in list(signals.get("signals") or []) + list(signals.get("suppressed_signals") or []):
+        key = (str(s.get("action") or ""), str(s.get("name") or ""), str(s.get("code") or ""))
+        if key in seen:
+            continue
+        seen.add(key)
+        raw_signals.append({k: v for k, v in dict(s).items() if k not in {"status", "cooldown"}})
+    cp_by_name = {r.get("name"): r.get("cp") for r in (valuation.get("rows") or []) if r.get("name")}
+    priced = []
+    for s in raw_signals:
+        row = dict(s)
+        if row.get("cp") is None:
+            row["cp"] = cp_by_name.get(row.get("name"))
+        priced.append(row)
+    filtered = apply_execution_filter(priced)
+    return action_sheet(
+        signals=filtered.get("signals") or [],
+        suppressed=filtered.get("suppressed_signals") or [],
+        valuation_rows=valuation.get("rows") or [],
+    )
+
+
+@app.get("/api/daily-push")
+def api_daily_push() -> dict[str, Any]:
+    """Build WeChat daily action push text. silent=true when no actionable items."""
+    sheet = api_action_sheet()
+    ledger = ledger_snapshot((valuation_dashboard().get("rows") or []))
+    text = format_daily_push(sheet, ledger)
+    return {
+        "silent": text is None,
+        "text": text or "",
+        "action_count": len([a for a in (sheet.get("actions") or []) if a.get("status") == "actionable"]),
+        "blocked_count": len(sheet.get("blocked") or []),
+        "generated_at": sheet.get("generated_at"),
     }
 
 
@@ -772,7 +847,14 @@ def api_my_trades() -> dict[str, Any]:
 @app.post("/api/my-trades")
 def api_my_trades_add(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
     try:
-        return add_trade(body or {})
+        # default shares to account setting (1 share)
+        acc = load_account()
+        if body is None:
+            body = {}
+        if body.get("shares") is None:
+            body = {**body, "shares": acc.get("shares_per_buy") or 1}
+        result = add_trade(body)
+        return result
     except Exception as exc:
         return {"ok": False, "error": str(exc)}
 

@@ -43,19 +43,129 @@ function renderCards(data) {
   const latestDate = data.recent_actions[0]?.date || '-';
   const valuation = data.valuation_freshness || {};
   const sourceLabel = data.data_source === 'lixinger' ? '理杏仁' : (data.data_source || 'local');
+  const sm = data.ledger?.summary || {};
   document.getElementById('syncTime').textContent = `${data.generated_at?.replace('T', ' ') || '-'} · ${sourceLabel}`;
   document.getElementById('summaryCards').innerHTML = `
-    <div class="card"><strong>${stats150.current}</strong><div class="label">150 当前份数 / 买${stats150.buy} 卖${stats150.sell}</div></div>
-    <div class="card"><strong>${statsS.current}</strong><div class="label">S 当前份数 / 买${statsS.buy} 卖${statsS.sell}</div></div>
-    <div class="card"><strong>${latestDate}</strong><div class="label">E大最近发车日期</div></div>
+    <div class="card"><strong>${sm.equity_rmb != null ? Number(sm.equity_rmb).toLocaleString('zh-CN') : '-'}</strong><div class="label">我的权益（元）</div></div>
+    <div class="card ${Number(sm.equity_pnl_rmb||0) >= 0 ? '' : 'stale'}"><strong>${sm.equity_pnl_rmb != null ? Number(sm.equity_pnl_rmb).toLocaleString('zh-CN') : '-'}</strong><div class="label">总盈亏 / ${sm.equity_return_pct != null ? (sm.equity_return_pct*100).toFixed(2)+'%' : '-'}</div></div>
+    <div class="card"><strong>${sm.used_shares ?? '-'} / ${data.ledger?.account?.total_shares ?? 150}</strong><div class="label">已用份数 / 总额度</div></div>
+    <div class="card"><strong>${stats150.current}</strong><div class="label">E大150 当前份数 / 买${stats150.buy} 卖${stats150.sell}</div></div>
     <div class="card ${valuation.warning ? 'stale' : ''}"><strong>${valuation.snapshot_date || '-'}</strong><div class="label">估值快照日期 / ${valuation.index_count || 0} 个指数</div></div>
-    <div class="card ${valuation.warning ? 'stale' : ''}"><strong>${valuation.cn_max_date || '-'}</strong><div class="label">A股理杏仁最新底层日期</div></div>
-    <div class="card"><strong>${valuation.hk_max_date || '-'}</strong><div class="label">港股理杏仁最新底层日期</div></div>`;
+    <div class="card"><strong>${latestDate}</strong><div class="label">E大最近发车日期</div></div>`;
   const warningBox = document.getElementById('freshnessWarning');
   if (warningBox) {
     const warnings = [data.data_warning, valuation.warning].filter(Boolean);
     warningBox.textContent = warnings.join('；') || '理杏仁底层数据新鲜度正常。';
     warningBox.className = warnings.length ? 'freshness-warning show' : 'freshness-warning';
+  }
+}
+
+function money(v) {
+  if (v === null || v === undefined || Number.isNaN(Number(v))) return '—';
+  return Number(v).toLocaleString('zh-CN', { maximumFractionDigits: 0 });
+}
+
+function pct2(v) {
+  if (v === null || v === undefined || Number.isNaN(Number(v))) return '—';
+  return (Number(v) * 100).toFixed(2) + '%';
+}
+
+function renderLedger(ledger) {
+  const cards = document.getElementById('ledgerCards');
+  const table = document.getElementById('ledgerTable');
+  const groups = document.getElementById('ledgerGroups');
+  const meta = document.getElementById('ledgerMeta');
+  if (!cards || !table) return;
+  if (!ledger) {
+    cards.innerHTML = '<div class="muted">账本加载中…</div>';
+    return;
+  }
+  const sm = ledger.summary || {};
+  const acc = ledger.account || {};
+  if (meta) {
+    meta.textContent = `本金${money(acc.principal)} · 每份${money(acc.unit_value)} · 同类≤${Math.round((acc.category_cap_pct||0.25)*100)}%`;
+  }
+  cards.innerHTML = `
+    <div class="decision-card"><div class="label">权益</div><strong>${money(sm.equity_rmb)}</strong></div>
+    <div class="decision-card"><div class="label">现金</div><strong>${money(sm.cash_rmb)}</strong></div>
+    <div class="decision-card"><div class="label">持仓市值</div><strong>${money(sm.market_value_rmb)}</strong></div>
+    <div class="decision-card"><div class="label">持仓盈亏</div><strong style="color:${Number(sm.position_pnl_rmb||0)>=0?'#18c37e':'#ff6b6b'}">${money(sm.position_pnl_rmb)} (${pct2(sm.position_return_pct)})</strong></div>
+    <div class="decision-card"><div class="label">总收益率</div><strong style="color:${Number(sm.equity_pnl_rmb||0)>=0?'#18c37e':'#ff6b6b'}">${pct2(sm.equity_return_pct)}</strong></div>
+    <div class="decision-card"><div class="label">已用份数</div><strong>${sm.used_shares ?? 0} / ${acc.total_shares ?? 150}</strong></div>`;
+  const positions = ledger.positions || [];
+  if (!positions.length) {
+    table.innerHTML = '<tr><td colspan="7" class="muted">暂无持仓。在「今日买卖提醒」点「我已买入」后会自动记账。</td></tr>';
+  } else {
+    table.innerHTML = positions.map(p => `
+      <tr>
+        <td>${htmlEscape(p.name)} <span class="muted">${htmlEscape(p.code||'')}</span></td>
+        <td>${htmlEscape(p.group || p.category || '')}</td>
+        <td>${htmlEscape(p.shares)}</td>
+        <td>${money(p.cost_rmb)}</td>
+        <td>${money(p.market_rmb)}</td>
+        <td style="color:${Number(p.pnl_rmb||0)>=0?'#18c37e':'#ff6b6b'}">${money(p.pnl_rmb)}</td>
+        <td style="color:${Number(p.return_pct||0)>=0?'#18c37e':'#ff6b6b'}">${pct2(p.return_pct)}</td>
+      </tr>`).join('');
+  }
+  if (groups) {
+    const gs = ledger.groups || [];
+    groups.innerHTML = gs.map(g => `
+      <div class="exposure-card ${g.at_cap ? 'stale' : ''}">
+        <div class="name">${htmlEscape(g.group)}</div>
+        <div class="value">${money(g.market_rmb)} · ${pct2(g.weight_pct)}</div>
+        <div class="muted">上限 ${pct2(g.cap_pct)} · 余量 ${money(g.headroom_rmb)}${g.at_cap ? ' · 已满' : ''}</div>
+      </div>`).join('') || '<div class="muted">暂无分类敞口</div>';
+  }
+}
+
+function renderActionSheet(sheet) {
+  const list = document.getElementById('actionSheetList');
+  const blockedBox = document.getElementById('actionSheetBlocked');
+  const meta = document.getElementById('actionSheetMeta');
+  if (!list) return;
+  if (!sheet) {
+    list.innerHTML = '<div class="muted">动作单加载中…</div>';
+    return;
+  }
+  const actions = sheet.actions || [];
+  const blocked = sheet.blocked || [];
+  const cool = sheet.cooldown || [];
+  if (meta) meta.textContent = `可执行 ${actions.filter(a=>a.status==='actionable').length} · 拦截 ${blocked.length} · 冷却 ${cool.length}`;
+  const actionable = actions.filter(a => a.status === 'actionable' || a.status === 'watch');
+  if (!actionable.length) {
+    list.innerHTML = '<div class="empty-hint">今日无新增可执行动作（可能都在冷却/已满仓）</div>';
+  } else {
+    list.innerHTML = actionable.map((a, index) => `
+      <div class="signal ${a.action || 'watch'}">
+        <div class="action">${htmlEscape(a.date || '')} · ${actionText[a.action] || a.action || '观察'} · 建议 ${a.suggested_shares ?? 0} 份</div>
+        <div class="name">${htmlEscape(a.name || '')} <span class="muted">${htmlEscape(a.group || a.category || '')}</span></div>
+        <div class="reason">${htmlEscape(a.checklist || a.reason || '')}</div>
+        ${a.action === 'buy' && (a.suggested_shares||0) > 0 ? `<div class="signal-actions"><button class="btn-mini btn-buy-done" data-as-idx="${index}">我已买入 ${a.suggested_shares} 份</button></div>` : ''}
+      </div>`).join('');
+    list.querySelectorAll('.btn-buy-done').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const a = actionable[Number(btn.dataset.asIdx)];
+        await recordMyTrade({ ...a, action: 'buy', shares: a.suggested_shares || 1 }, btn);
+      });
+    });
+  }
+  if (blockedBox) {
+    const parts = [];
+    if (blocked.length) {
+      parts.push(`<div class="cooldown-title">风控拦截（同类25%/现金/份额）</div>` + blocked.map(a => `
+        <div class="signal cooldown">
+          <div class="action">${htmlEscape(a.name)} · 拦截</div>
+          <div class="reason">${htmlEscape(a.block_reason || '')}</div>
+        </div>`).join(''));
+    }
+    if (cool.length) {
+      parts.push(`<div class="cooldown-title">冷却中</div>` + cool.map(a => `
+        <div class="signal cooldown">
+          <div class="action">${htmlEscape(a.name)} · 冷却</div>
+          <div class="reason">${htmlEscape(a.cooldown?.reason || a.reason || '')}</div>
+        </div>`).join(''));
+    }
+    blockedBox.innerHTML = parts.join('');
   }
 }
 
@@ -166,7 +276,10 @@ async function recordMyTrade(signal, btn) {
     if (btn) btn.textContent = '已记录';
     // refresh summary so signal moves into cooldown immediately
     const summary = await getJSON('/api/summary');
+    renderCards(summary);
     renderSignals(summary.signals || [], summary.suppressed_signals || [], summary.decision_memory || null);
+    renderLedger(summary.ledger);
+    renderActionSheet(summary.action_sheet);
     renderMyTrades();
   } catch (err) {
     if (btn) {
@@ -390,6 +503,8 @@ async function init() {
   try {
     summary = await getJSON('/api/summary');
     renderCards(summary);
+    renderLedger(summary.ledger);
+    renderActionSheet(summary.action_sheet);
     renderRecentActions(summary.recent_actions || []);
     renderSignals(summary.signals || [], summary.suppressed_signals || [], summary.decision_memory || null);
     renderValuations(summary.valuation_dashboard || summary.valuation_rows || []);

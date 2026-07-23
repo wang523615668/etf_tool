@@ -6,12 +6,14 @@
   <title>ETF 拯救世界投资仪表盘</title>
   <!-- local echarts: jsdelivr often hangs in CN and freezes page at 读取中… -->
   <script src="/static/vendor/echarts.min.js?v=5.5.1"></script>
-  <link rel="stylesheet" href="/static/style.css?v=20260723a" />
+  <link rel="stylesheet" href="/static/style.css?v=20260723b" />
 </head>
 <body>
   <aside class="sidebar">
     <div class="brand">ETF 投资仪表盘</div>
     <a href="#overview">首页总览</a>
+    <a href="#ledger">收益账本</a>
+    <a href="#actionSheet">今日动作单</a>
     <a href="#valuation">估值温度计</a>
     <a href="#sunburst">仓位旭日图</a>
     <a href="#signals">买卖提醒</a>
@@ -20,7 +22,7 @@
     <a href="#edTalks">E大发言归档</a>
     <a href="#topics">主题知识库</a>
     <a href="#rules">方法论规则</a>
-    <a href="/index-detail?t=20260723a" style="border-top:1px solid #2d3148;margin-top:8px;padding-top:8px;color:#f59e0b">📊 指数估值详情</a>
+    <a href="/index-detail?t=20260723b" style="border-top:1px solid #2d3148;margin-top:8px;padding-top:8px;color:#f59e0b">📊 指数估值详情</a>
   </aside>
   <main class="main">
     <section id="overview" class="hero">
@@ -36,6 +38,36 @@
 
     <section class="cards" id="summaryCards"></section>
     <section id="freshnessWarning" class="freshness-warning"></section>
+
+    <section id="ledger" class="panel">
+      <div class="panel-head">
+        <div>
+          <h2>我的收益账本</h2>
+          <p>本金 150 万 / 150 份，每次 1 份；医药/医疗合并一类，同类 ≤25%。点「我已买入」后自动入账。</p>
+        </div>
+        <div id="ledgerMeta" class="topic-meta">—</div>
+      </div>
+      <div id="ledgerCards" class="decision-board"></div>
+      <div class="table-wrap" style="margin-top:12px">
+        <table>
+          <thead><tr><th>标的</th><th>类别</th><th>份数</th><th>成本</th><th>市值</th><th>盈亏</th><th>收益率</th></tr></thead>
+          <tbody id="ledgerTable"></tbody>
+        </table>
+      </div>
+      <div id="ledgerGroups" class="exposure-grid" style="margin-top:12px"></div>
+    </section>
+
+    <section id="actionSheet" class="panel">
+      <div class="panel-head">
+        <div>
+          <h2>今日动作单</h2>
+          <p>信号 + 冷却 + 现金 + 同类25%上限，给出可执行份数。工作日推送复用此清单。</p>
+        </div>
+        <div id="actionSheetMeta" class="topic-meta">—</div>
+      </div>
+      <div id="actionSheetList" class="signal-list"></div>
+      <div id="actionSheetBlocked" class="signal-list suppressed-list"></div>
+    </section>
 
     <section id="valuation" class="panel">
       <div class="panel-head">
@@ -158,6 +190,6 @@
       </div>
     </section>
   </main>
-  <script src="/static/app.js?v=20260723a"></script>
+  <script src="/static/app.js?v=20260723b"></script>
 </body>
 </html>
