@@ -6,6 +6,7 @@ Rules (user-defined):
 - single category group cap = 25% of principal
 - medical / 医药 / 医疗 merge into one group
 - show P&L and return rate
+- overall equity target from A股全指 10y PE/PB percentile: target = 1 - avg_percentile
 """
 from __future__ import annotations
 
@@ -21,14 +22,33 @@ BASE = Path(__file__).resolve().parents[1]
 DATA = BASE / "data"
 ACCOUNT_FILE = DATA / "my_account.json"
 
+# 决策参数配置（从配置读取，有默认值）
+MARKET_INDEX_NAME = CONFIG["market_position"]["index_name"]
+MARKET_WINDOW_YEARS = float(CONFIG["market_position"]["window_years"])
+BUY_COOLDOWN_DAYS = CONFIG["decision"]["buy_cooldown_days"]
+BUY_DROP_RESUME_PCT = CONFIG["decision"]["buy_drop_resume_pct"]
+SELL_COOLDOWN_DAYS = CONFIG["decision"]["sell_cooldown_days"]
+SELL_RISE_RESUME_PCT = CONFIG["decision"]["sell_rise_resume_pct"]
+CATEGORY_CAP_PCT = CONFIG["decision"]["category_cap_pct"]
+
 DEFAULT_ACCOUNT = {
     "principal": 1_500_000.0,
     "total_shares": 150,
     "shares_per_buy": 1.0,
     "category_cap_pct": 0.25,
     "cash": 1_500_000.0,
-    "note": "本金150万 / 150份 / 每次1份 / 同类≤25%",
+    "note": "本金150万 / 150份 / 每次1份 / 同类≤25% / 总仓=1−A股全指10年分位",
 }
+
+# 从CONFIG读取category_cap_pct，有默认值
+try:
+    from app.main import CONFIG
+    CATEGORY_CAP_PCT = CONFIG["decision"]["category_cap_pct"]
+except ImportError:
+    CATEGORY_CAP_PCT = 0.25
+
+# 更新默认配置中的cap值
+DEFAULT_ACCOUNT["category_cap_pct"] = CATEGORY_CAP_PCT
 
 # map raw category/name keywords → exposure group (for 25% cap)
 CATEGORY_GROUP_ALIASES: dict[str, str] = {
@@ -327,9 +347,124 @@ def _price_map_from_valuation_rows(rows: list[dict[str, Any]] | None) -> dict[st
     return out
 
 
+def market_position_guide(
+    window_years: float = MARKET_WINDOW_YEARS,
+    allow_network: bool = False,
+    account: dict[str, Any] | None = None,
+    positions_summary: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """A股全指 valuation → overall equity target.
+
+    Rule: avg_pct = mean(PE_percentile, PB_percentile) on window (default 10y).
+    target_position_pct = 1 - avg_pct  (high valuation → lower equity exposure).
+    Uses cache only by default (no 理杏仁 token on page open).
+    """
+    acc = account or load_account()
+    principal = float(acc.get("principal") or DEFAULT_ACCOUNT["principal"])
+    total_shares = float(acc.get("total_shares") or DEFAULT_ACCOUNT["total_shares"]) or 150.0
+    unit = share_unit_value(acc)
+
+    pe_pct = pb_pct = avg_pct = None
+    pe = pb = None
+    snapshot_date = available_years = effective_start = effective_end = None
+    error = None
+    try:
+        from app.data_sources.lixinger import get_index_detail
+
+        detail = get_index_detail(
+            MARKET_INDEX_NAME,
+            window_years=float(window_years),
+            allow_network=allow_network,
+        )
+        latest = detail.get("latest") or {}
+        pe = latest.get("pe")
+        pb = latest.get("pb")
+        pe_pct = latest.get("pe_percentile")
+        pb_pct = latest.get("pb_percentile")
+        snapshot_date = latest.get("date") or detail.get("effective_end") or detail.get("available_end")
+        available_years = detail.get("available_years")
+        effective_start = detail.get("effective_start")
+        effective_end = detail.get("effective_end")
+        vals = [float(v) for v in (pe_pct, pb_pct) if v is not None]
+        if vals:
+            avg_pct = sum(vals) / len(vals)
+    except Exception as exc:
+        error = str(exc)
+
+    target_pct = None if avg_pct is None else max(0.0, min(1.0, 1.0 - float(avg_pct)))
+    target_rmb = None if target_pct is None else principal * target_pct
+    target_shares = None if target_pct is None else total_shares * target_pct
+
+    # current equity exposure = market_value / principal (not total equity which includes cash)
+    used_shares = None
+    market_value = None
+    current_pct = None
+    if positions_summary:
+        used_shares = positions_summary.get("used_shares")
+        market_value = positions_summary.get("market_value_rmb")
+        if market_value is not None and principal:
+            current_pct = max(0.0, float(market_value) / principal)
+        elif used_shares is not None and total_shares:
+            current_pct = max(0.0, float(used_shares) / total_shares)
+
+    headroom_pct = None
+    headroom_rmb = None
+    headroom_shares = None
+    over_target = False
+    if target_pct is not None and current_pct is not None:
+        headroom_pct = target_pct - current_pct
+        headroom_rmb = principal * headroom_pct
+        headroom_shares = total_shares * headroom_pct
+        over_target = headroom_pct < -1e-9
+
+    # shares still allowed by market cap (floor, non-negative)
+    max_new_shares_by_market = 0
+    if headroom_shares is not None and not over_target:
+        max_new_shares_by_market = max(0, int(headroom_shares // 1))  # whole shares
+
+    return {
+        "index": MARKET_INDEX_NAME,
+        "code": "000985",
+        "window_years": float(window_years),
+        "rule": "目标总仓位 = 1 − A股全指(PE分位+PB分位)/2，默认10年窗口",
+        "snapshot_date": snapshot_date,
+        "available_years": available_years,
+        "effective_start": effective_start,
+        "effective_end": effective_end,
+        "pe": pe,
+        "pb": pb,
+        "pe_percentile": None if pe_pct is None else round(float(pe_pct), 4),
+        "pb_percentile": None if pb_pct is None else round(float(pb_pct), 4),
+        "avg_percentile": None if avg_pct is None else round(float(avg_pct), 4),
+        "target_position_pct": None if target_pct is None else round(float(target_pct), 4),
+        "target_rmb": None if target_rmb is None else round(float(target_rmb), 2),
+        "target_shares": None if target_shares is None else round(float(target_shares), 2),
+        "current_position_pct": None if current_pct is None else round(float(current_pct), 4),
+        "current_market_rmb": None if market_value is None else round(float(market_value), 2),
+        "current_used_shares": used_shares,
+        "headroom_pct": None if headroom_pct is None else round(float(headroom_pct), 4),
+        "headroom_rmb": None if headroom_rmb is None else round(float(headroom_rmb), 2),
+        "headroom_shares": None if headroom_shares is None else round(float(headroom_shares), 2),
+        "max_new_shares_by_market": max_new_shares_by_market,
+        "over_target": over_target,
+        "unit_value": unit,
+        "error": error,
+        "cache_only": not allow_network,
+    }
+
+
 def ledger_snapshot(valuation_rows: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     prices = _price_map_from_valuation_rows(valuation_rows)
-    return build_positions(price_map=prices)
+    snap = build_positions(price_map=prices)
+    market = market_position_guide(account=load_account(), positions_summary=snap.get("summary"))
+    snap["market_position"] = market
+    # fold key fields into summary for cards
+    sm = snap["summary"]
+    sm["target_position_pct"] = market.get("target_position_pct")
+    sm["current_position_pct"] = market.get("current_position_pct")
+    sm["market_headroom_shares"] = market.get("headroom_shares")
+    sm["market_avg_percentile"] = market.get("avg_percentile")
+    return snap
 
 
 def action_sheet(
@@ -337,16 +472,22 @@ def action_sheet(
     suppressed: list[dict[str, Any]] | None = None,
     valuation_rows: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
-    """Build today's executable checklist with share sizing + 25% group cap."""
+    """Build today's executable checklist with share sizing + 25% group + A股全指总仓."""
     acc = load_account()
     unit = share_unit_value(acc)
     principal = float(acc["principal"])
     cap_pct = float(acc["category_cap_pct"])
     per_buy = float(acc.get("shares_per_buy") or 1)
     snap = build_positions(price_map=_price_map_from_valuation_rows(valuation_rows), account=acc)
+    market = market_position_guide(account=acc, positions_summary=snap.get("summary"))
     group_mkt = {g["group"]: g["market_rmb"] for g in snap["groups"]}
     cash = snap["summary"]["cash_rmb"]
     remaining_shares = snap["summary"]["remaining_shares"]
+    # market-level remaining capacity (shares), optimistic for multi-buy same day
+    market_headroom_shares = float(market.get("headroom_shares") or 0.0)
+    if market.get("over_target"):
+        market_headroom_shares = 0.0
+    market_ok = market.get("target_position_pct") is not None and market.get("error") is None
 
     # recompute filter if raw signals given without cooldown
     if signals is None and suppressed is None:
@@ -368,9 +509,16 @@ def action_sheet(
         max_shares_by_cap = int(headroom // unit) if unit else 0
         max_shares_by_cash = int(cash // unit) if unit else 0
         max_shares_by_pool = int(remaining_shares)
+        max_shares_by_market = int(max(0.0, market_headroom_shares)) if market_ok else max_shares_by_pool
 
         if action == "buy":
-            allowed = min(int(per_buy), max_shares_by_cap, max_shares_by_cash, max_shares_by_pool)
+            allowed = min(
+                int(per_buy),
+                max_shares_by_cap,
+                max_shares_by_cash,
+                max_shares_by_pool,
+                max_shares_by_market if market_ok else int(per_buy),
+            )
             reasons = []
             if max_shares_by_cap <= 0:
                 reasons.append(f"同类[{group}]已达/超过{int(cap_pct*100)}%上限")
@@ -378,6 +526,14 @@ def action_sheet(
                 reasons.append("现金不足1份")
             if max_shares_by_pool <= 0:
                 reasons.append("150份额度已用尽")
+            if market_ok and max_shares_by_market <= 0:
+                tgt = market.get("target_position_pct")
+                cur = market.get("current_position_pct")
+                reasons.append(
+                    f"总仓已达/超过A股全指目标"
+                    f"（目标{None if tgt is None else round(tgt*100,1)}%"
+                    f"/当前{None if cur is None else round(cur*100,1)}%）"
+                )
             if allowed <= 0:
                 blocked.append(
                     {
@@ -386,6 +542,7 @@ def action_sheet(
                         "suggested_shares": 0,
                         "block_reason": "；".join(reasons) or "风控拦截",
                         "cap_headroom_rmb": round(headroom, 2),
+                        "market_headroom_shares": round(market_headroom_shares, 2),
                     }
                 )
                 continue
@@ -398,14 +555,20 @@ def action_sheet(
                     "suggested_amount_rmb": round(amount, 2),
                     "unit_value": unit,
                     "cap_headroom_rmb": round(headroom, 2),
+                    "market_headroom_shares": round(market_headroom_shares, 2),
                     "group_weight_pct": round(used / principal, 4) if principal else 0.0,
-                    "checklist": f"买入 {name} {allowed} 份（约{int(amount)}元）｜{group}敞口头寸{round(headroom,0):.0f}元",
+                    "checklist": (
+                        f"买入 {name} {allowed} 份（约{int(amount)}元）"
+                        f"｜{group}余{round(headroom,0):.0f}元"
+                        f"｜总仓余{int(market_headroom_shares)}份"
+                    ),
                     "status": "actionable",
                 }
             )
             # optimistic consume for multi-signal same day ordering
             cash -= amount
             remaining_shares -= allowed
+            market_headroom_shares = max(0.0, market_headroom_shares - allowed)
             group_mkt[group] = used + amount
         elif action in {"reduce", "sell"}:
             # allow reduce always if held
@@ -449,6 +612,7 @@ def action_sheet(
     return {
         "account": snap["account"],
         "ledger_summary": snap["summary"],
+        "market_position": market,
         "groups": snap["groups"],
         "actions": actions,
         "blocked": blocked,
@@ -461,6 +625,7 @@ def action_sheet(
             "category_cap_pct": cap_pct,
             "category_merge": "医药/医疗/全指医药/养老 → 医药医疗",
             "cooldown": "买入后30天或跌≥10%恢复",
+            "market_cap": "总仓目标=1−A股全指10年(PE分位+PB分位)/2",
         },
         "generated_at": _now(),
     }
@@ -477,12 +642,25 @@ def format_daily_push(sheet: dict[str, Any], ledger: dict[str, Any] | None = Non
 
     sm = (ledger or {}).get("summary") or sheet.get("ledger_summary") or {}
     acc = sheet.get("account") or {}
+    mp = sheet.get("market_position") or (ledger or {}).get("market_position") or {}
     lines = []
     lines.append(f"ETF动作单 | {datetime.now().strftime('%Y-%m-%d %H:%M')}")
     lines.append(
         f"权益 {sm.get('equity_rmb', '—')}｜盈亏 {sm.get('equity_pnl_rmb', '—')}（{round((sm.get('equity_return_pct') or 0)*100, 2)}%）"
         f"｜现金 {sm.get('cash_rmb', '—')}｜已用份 {sm.get('used_shares', '—')}/{acc.get('total_shares', 150)}"
     )
+    if mp.get("target_position_pct") is not None:
+        tgt = round(float(mp["target_position_pct"]) * 100, 1)
+        cur = mp.get("current_position_pct")
+        cur_s = "—" if cur is None else f"{round(float(cur)*100, 1)}%"
+        avg = mp.get("avg_percentile")
+        avg_s = "—" if avg is None else f"{round(float(avg)*100, 1)}%"
+        head = mp.get("headroom_shares")
+        head_s = "—" if head is None else f"{round(float(head), 1)}份"
+        lines.append(
+            f"A股全指10年分位 {avg_s} → 目标总仓 {tgt}% / 当前 {cur_s} / 总仓余量 {head_s}"
+            f"（数据 {mp.get('snapshot_date') or '—'}）"
+        )
     lines.append("")
     if actions:
         lines.append("【今日可执行】")
@@ -500,7 +678,9 @@ def format_daily_push(sheet: dict[str, Any], ledger: dict[str, Any] | None = Non
             reason = (a.get("cooldown") or {}).get("reason") or a.get("reason") or ""
             lines.append(f"- {a.get('name')}：{reason[:80]}")
     lines.append("")
+    cap_show = int(float(acc.get("category_cap_pct") or 0.25) * 100)
     lines.append(
-        f"纪律：每次{acc.get('shares_per_buy', 1)}份·同类≤{int(float(acc.get('category_cap_pct') or 0.25)*100)}%·冷却30天/跌10%"
+        f"纪律：每次{acc.get('shares_per_buy', 1)}份·同类≤{cap_show}%·"
+        f"总仓=1-A股全指10年分位·冷却30天/跌10%"
     )
     return "\n".join(lines)

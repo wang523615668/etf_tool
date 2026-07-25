@@ -44,11 +44,15 @@ function renderCards(data) {
   const valuation = data.valuation_freshness || {};
   const sourceLabel = data.data_source === 'lixinger' ? '理杏仁' : (data.data_source || 'local');
   const sm = data.ledger?.summary || {};
+  const mp = data.market_position || data.ledger?.market_position || {};
+  const tgt = mp.target_position_pct != null ? (mp.target_position_pct * 100).toFixed(1) + '%' : '-';
+  const cur = mp.current_position_pct != null ? (mp.current_position_pct * 100).toFixed(1) + '%' : '-';
   document.getElementById('syncTime').textContent = `${data.generated_at?.replace('T', ' ') || '-'} · ${sourceLabel}`;
   document.getElementById('summaryCards').innerHTML = `
     <div class="card"><strong>${sm.equity_rmb != null ? Number(sm.equity_rmb).toLocaleString('zh-CN') : '-'}</strong><div class="label">我的权益（元）</div></div>
     <div class="card ${Number(sm.equity_pnl_rmb||0) >= 0 ? '' : 'stale'}"><strong>${sm.equity_pnl_rmb != null ? Number(sm.equity_pnl_rmb).toLocaleString('zh-CN') : '-'}</strong><div class="label">总盈亏 / ${sm.equity_return_pct != null ? (sm.equity_return_pct*100).toFixed(2)+'%' : '-'}</div></div>
     <div class="card"><strong>${sm.used_shares ?? '-'} / ${data.ledger?.account?.total_shares ?? 150}</strong><div class="label">已用份数 / 总额度</div></div>
+    <div class="card ${mp.over_target ? 'stale' : ''}"><strong>${cur} → ${tgt}</strong><div class="label">当前总仓 → A股全指目标</div></div>
     <div class="card"><strong>${stats150.current}</strong><div class="label">E大150 当前份数 / 买${stats150.buy} 卖${stats150.sell}</div></div>
     <div class="card ${valuation.warning ? 'stale' : ''}"><strong>${valuation.snapshot_date || '-'}</strong><div class="label">估值快照日期 / ${valuation.index_count || 0} 个指数</div></div>
     <div class="card"><strong>${latestDate}</strong><div class="label">E大最近发车日期</div></div>`;
@@ -83,7 +87,7 @@ function renderLedger(ledger) {
   const sm = ledger.summary || {};
   const acc = ledger.account || {};
   if (meta) {
-    meta.textContent = `本金${money(acc.principal)} · 每份${money(acc.unit_value)} · 同类≤${Math.round((acc.category_cap_pct||0.25)*100)}%`;
+    meta.textContent = `本金${money(acc.principal)} · 每份${money(acc.unit_value)} · 同类≤${Math.round((acc.category_cap_pct||0.25)*100)}% · 总仓跟A股全指`;
   }
   cards.innerHTML = `
     <div class="decision-card"><div class="label">权益</div><strong>${money(sm.equity_rmb)}</strong></div>
@@ -118,6 +122,34 @@ function renderLedger(ledger) {
   }
 }
 
+function renderMarketPosition(mp) {
+  const cards = document.getElementById('marketPositionCards');
+  const meta = document.getElementById('marketPositionMeta');
+  if (!cards) return;
+  if (!mp || mp.target_position_pct == null) {
+    cards.innerHTML = `<div class="muted">A股全指仓位指引加载失败${mp?.error ? '：' + htmlEscape(mp.error) : '…'}</div>`;
+    if (meta) meta.textContent = '无数据';
+    return;
+  }
+  const avg = mp.avg_percentile != null ? (mp.avg_percentile * 100).toFixed(1) + '%' : '—';
+  const peP = mp.pe_percentile != null ? (mp.pe_percentile * 100).toFixed(1) + '%' : '—';
+  const pbP = mp.pb_percentile != null ? (mp.pb_percentile * 100).toFixed(1) + '%' : '—';
+  const tgt = (mp.target_position_pct * 100).toFixed(1) + '%';
+  const cur = mp.current_position_pct != null ? (mp.current_position_pct * 100).toFixed(1) + '%' : '—';
+  const headSh = mp.headroom_shares != null ? Number(mp.headroom_shares).toFixed(1) : '—';
+  const headRmb = money(mp.headroom_rmb);
+  if (meta) {
+    meta.textContent = `${mp.index || 'A股全指'} · ${mp.window_years || 10}年 · 数据 ${mp.snapshot_date || '—'}`;
+  }
+  cards.innerHTML = `
+    <div class="decision-card"><div class="label">10年综合分位</div><strong>${avg}</strong><div class="muted">PE ${peP} / PB ${pbP}</div></div>
+    <div class="decision-card"><div class="label">目标总仓位</div><strong style="color:#60a5fa">${tgt}</strong><div class="muted">= 1 − 分位</div></div>
+    <div class="decision-card ${mp.over_target ? 'stale' : ''}"><div class="label">当前总仓</div><strong>${cur}</strong><div class="muted">持仓市值/本金</div></div>
+    <div class="decision-card"><div class="label">总仓余量</div><strong>${headSh} 份</strong><div class="muted">约 ${headRmb} 元</div></div>
+    <div class="decision-card"><div class="label">目标金额/份</div><strong>${money(mp.target_rmb)}</strong><div class="muted">${mp.target_shares != null ? Number(mp.target_shares).toFixed(1) : '—'} / 150 份</div></div>
+    <div class="decision-card"><div class="label">今日最多可新买</div><strong>${mp.max_new_shares_by_market ?? 0} 份</strong><div class="muted">${mp.over_target ? '已超目标·禁新开' : '受总仓约束'}</div></div>`;
+}
+
 function renderActionSheet(sheet) {
   const list = document.getElementById('actionSheetList');
   const blockedBox = document.getElementById('actionSheetBlocked');
@@ -130,7 +162,10 @@ function renderActionSheet(sheet) {
   const actions = sheet.actions || [];
   const blocked = sheet.blocked || [];
   const cool = sheet.cooldown || [];
-  if (meta) meta.textContent = `可执行 ${actions.filter(a=>a.status==='actionable').length} · 拦截 ${blocked.length} · 冷却 ${cool.length}`;
+  if (meta) meta.textContent = `可执行 ${actions.filter(a=>a.status==='actionable').length} · 拦截 ${blocked.length} · 冷却 ${cool.length}` +
+    (sheet.market_position?.target_position_pct != null
+      ? ` · 目标总仓${(sheet.market_position.target_position_pct*100).toFixed(1)}%`
+      : '');
   const actionable = actions.filter(a => a.status === 'actionable' || a.status === 'watch');
   if (!actionable.length) {
     list.innerHTML = '<div class="empty-hint">今日无新增可执行动作（可能都在冷却/已满仓）</div>';
@@ -279,6 +314,7 @@ async function recordMyTrade(signal, btn) {
     renderCards(summary);
     renderSignals(summary.signals || [], summary.suppressed_signals || [], summary.decision_memory || null);
     renderLedger(summary.ledger);
+    renderMarketPosition(summary.market_position || summary.ledger?.market_position);
     renderActionSheet(summary.action_sheet);
     renderMyTrades();
   } catch (err) {
@@ -375,17 +411,34 @@ function renderValuations(dashboard) {
         <ul>${(top[key] || []).slice(0, 5).map(row => `<li><a href="${detailHref(row.name)}">${htmlEscape(row.name)}</a><b>${row.temperature ?? '-'}°</b></li>`).join('') || '<li><span>暂无</span><b>-</b></li>'}</ul>
       </div>`).join('');
   }
-  target.innerHTML = rows.slice(0, 16).map(row => `
+  const fmtDev = (v) => {
+    if (v == null || Number.isNaN(Number(v))) return '—';
+    const n = Number(v);
+    return (n > 0 ? '+' : '') + n.toFixed(1) + '%';
+  };
+  target.innerHTML = rows.slice(0, 16).map(row => {
+    const peExt = (row.pe_hist_min_pct != null || row.pe_hist_max_pct != null)
+      ? `${fmtDev(row.pe_hist_min_pct)}~${fmtDev(row.pe_hist_max_pct)}` : '—';
+    const pbExt = (row.pb_hist_min_pct != null || row.pb_hist_max_pct != null)
+      ? `${fmtDev(row.pb_hist_min_pct)}~${fmtDev(row.pb_hist_max_pct)}` : '—';
+    const interest = row.mean_dev_interest_score != null
+      ? `兴趣${row.mean_dev_interest_score}·${htmlEscape(row.mean_dev_interest_level || '')}`
+      : '';
+    return `
     <a class="valuation-card ${row.action}" href="${detailHref(row.name)}" style="text-decoration:none;color:inherit;display:block">
       <div class="valuation-head"><b>${htmlEscape(row.name)}</b><span class="tag ${row.action}">${valuationActionText[row.action] || row.action}</span></div>
       <div class="temperature"><strong>${row.temperature ?? '-'}</strong><span>估值温度</span></div>
+      ${row.double_avg_buy ? '<div class="double-avg-badge">✅ 双均线低估</div>' : ''}
       <div class="valuation-metrics">
         <span>PE ${num(row.pe)}</span><span>PE分位 ${pct(row.pe_percentile)}</span>
         <span>PB ${num(row.pb)}</span><span>PB分位 ${pct(row.pb_percentile)}</span>
+        <span>PE偏离 ${fmtDev(row.pe_dev_pct)}</span><span>PE极值 ${peExt}</span>
+        <span>PB偏离 ${fmtDev(row.pb_dev_pct)}</span><span>PB极值 ${pbExt}</span>
       </div>
-      <div class="reason">${htmlEscape(row.reason || '')}</div>
-      <div class="muted" style="margin-top:8px">点击查看历史分位曲线 →</div>
-    </a>`).join('');
+      <div class="reason">${htmlEscape(row.reason || '')}${interest ? ' · ' + interest : ''}</div>
+      <div class="muted" style="margin-top:8px">点击查看历史分位+本指数5y偏离兴趣区 →</div>
+    </a>`;
+  }).join('');
 }
 
 function renderExposure(exposure) {
@@ -503,6 +556,7 @@ async function init() {
   try {
     summary = await getJSON('/api/summary');
     renderCards(summary);
+    renderMarketPosition(summary.market_position || summary.ledger?.market_position);
     renderLedger(summary.ledger);
     renderActionSheet(summary.action_sheet);
     renderRecentActions(summary.recent_actions || []);

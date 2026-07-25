@@ -1,0 +1,30 @@
+# ETF投资仪表盘配置文件
+paths:
+  jztz_base: "/vol1/1000/openzl/jztz"
+  topic_index: "/vol1/  # 自动根据BASE解析，优先BASE/data/topic_index.json
+  cache_dir: "cache"
+  data_dir: "data"
+
+api:
+  host: "127.0.0.1"
+  port: 8888
+
+decision:
+  buy_cooldown_days: 30
+  buy_drop_resume_pct: 0.10
+  sell_codown_days: 30
+  sell_rise_resume_pct: 0.10
+  match_by_category: true
+  category_cap_pct: 0.25
+
+market_position:
+  index_name: "A股全指"
+  window_years: 10
+
+data_sources:
+  lixinger:
+    history_years: 20
+    percentile_years: 5
+    fetch_chunk_days: 730
+    series_ttl: 86400  # 24小时
+    snapshot_ttl: 604800  # 7天

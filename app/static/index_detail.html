@@ -6,7 +6,7 @@
   <title>指数估值详情 · ETF 仪表盘</title>
   <!-- local echarts: avoid jsdelivr hang -->
   <script src="/static/vendor/echarts.min.js?v=5.5.1"></script>
-  <link rel="stylesheet" href="/static/style.css?v=20260723d" />
+  <link rel="stylesheet" href="/static/style.css?v=20260725a" />
   <style>
     .detail-toolbar {
       display: flex;
@@ -141,6 +141,8 @@
     }
     .tag-buy { color: #18c37e; }
     .tag-sell { color: #ff6b6b; }
+    .tag-hold { color: #f59e0b; }
+    .tag-watch { color: #69d2ff; }
     .empty-hint { color: #8fa0c5; font-size: 13px; }
     @media (max-width: 1000px) {
       .metric-row { grid-template-columns: repeat(3, minmax(0, 1fr)); }
@@ -267,7 +269,7 @@
       cp: makeChart(document.getElementById('cpChart')),
     };
 
-    function lineOption(title, dates, values, color, markPoints) {
+    function lineOption(title, dates, values, color, markPoints, extras) {
       const series = [{
         name: title,
         type: 'line',
@@ -285,10 +287,34 @@
           data: markPoints,
         };
       }
+      // Extra MA lines (e.g., 850 MA, 250 MA)
+      if (extras) {
+        if (extras.ma850) {
+          series.push({
+            name: extras.ma850.name || 'MA850',
+            type: 'line',
+            showSymbol: false,
+            data: extras.ma850.data,
+            lineStyle: { width: 1.5, color: extras.ma850.color || '#ff6b6b', type: 'dashed' },
+            itemStyle: { color: extras.ma850.color || '#ff6b6b' },
+          });
+        }
+        if (extras.ma250) {
+          series.push({
+            name: extras.ma250.name || 'MA250',
+            type: 'line',
+            showSymbol: false,
+            data: extras.ma250.data,
+            lineStyle: { width: 1.5, color: extras.ma250.color || '#f59e0b', type: 'dotted' },
+            itemStyle: { color: extras.ma250.color || '#f59e0b' },
+          });
+        }
+      }
       return {
         backgroundColor: 'transparent',
         grid: { left: 48, right: 18, top: 36, bottom: 48 },
         tooltip: { trigger: 'axis' },
+        legend: extras ? { data: [title, ...(extras.ma850 ? ['MA850'] : []), ...(extras.ma250 ? ['MA250'] : [])], textStyle: { color: '#c9d4f0' }, top: 4 } : undefined,
         dataZoom: [
           { type: 'inside', xAxisIndex: 0 },
           { type: 'slider', height: 18, bottom: 8, borderColor: '#2d3b63', fillerColor: 'rgba(105,210,255,0.12)' },
@@ -352,12 +378,14 @@
       const cp = rows.map(r => r.cp);
       const pe = rows.map(r => r.pe);
       const pb = rows.map(r => r.pb);
+      const cpMa850 = rows.map(r => r.cp_ma850);
+      const cpMa250 = rows.map(r => r.cp_ma250);
       const marks = buildCpMarkPoints(detail);
       return {
         backgroundColor: 'transparent',
         animation: false,
         legend: {
-          data: ['点位', 'PE', 'PB'],
+          data: ['点位', 'PE', 'PB', 'MA850', 'MA250'],
           textStyle: { color: '#c9d4f0' },
           top: 4,
         },
@@ -407,19 +435,78 @@
             data: pb, lineStyle: { width: 2, color: '#18c37e' }, itemStyle: { color: '#18c37e' },
             areaStyle: { color: 'rgba(24,195,126,0.08)' },
           },
+          {
+            name: 'MA850', type: 'line', xAxisIndex: 0, yAxisIndex: 0, showSymbol: false,
+            data: cpMa850, lineStyle: { width: 1.5, color: '#ff6b6b', type: 'dashed' },
+            itemStyle: { color: '#ff6b6b' },
+          },
+          {
+            name: 'MA250', type: 'line', xAxisIndex: 0, yAxisIndex: 0, showSymbol: false,
+            data: cpMa250, lineStyle: { width: 1.5, color: '#f59e0b', type: 'dotted' },
+            itemStyle: { color: '#f59e0b' },
+          },
         ],
       };
     }
 
+    function fmtDev(v) {
+      if (v == null || Number.isNaN(Number(v))) return '—';
+      const n = Number(v);
+      const sign = n > 0 ? '+' : '';
+      return sign + n.toFixed(1) + '%';
+    }
     function renderMetrics(detail) {
       const latest = detail.latest || {};
       const vis = detail.marks_visible != null ? detail.marks_visible : (detail.marks || []).length;
       const out = detail.marks_outside_window || 0;
+      const md = detail.mean_deviation || {};
+      const peD = md.pe || {};
+      const pbD = md.pb || {};
+      const peLine = peD.dev_pct != null
+        ? `${fmtDev(peD.dev_pct)} <span style="color:#8fa0c5;font-size:12px">极值 ${fmtDev(peD.hist_min_pct)} ~ ${fmtDev(peD.hist_max_pct)}</span>`
+        : '—';
+      const pbLine = pbD.dev_pct != null
+        ? `${fmtDev(pbD.dev_pct)} <span style="color:#8fa0c5;font-size:12px">极值 ${fmtDev(pbD.hist_min_pct)} ~ ${fmtDev(pbD.hist_max_pct)}</span>`
+        : '—';
+      const interest = md.interest_score != null
+        ? `${md.interest_score} · ${esc(md.interest_level || '')}`
+        : '—';
+
+      // 双均线信号
+      const daBuy = latest.double_avg_buy;
+      const daNote = latest.double_avg_buy_note || '';
+      const daHtml = daBuy
+        ? `<strong style="color:#18c37e">✅ 双均线确认低估</strong><div class="label" style="margin-top:4px">${esc(daNote)}</div>`
+        : `<strong style="color:#8fa0c5">—</strong><div class="label" style="margin-top:4px">估值未同时低于3y/5y均值</div>`;
+
+      // 技术位
+      const ts = latest.tech_signals || [];
+      const cp850 = latest.cp_ma850;
+      const cp250 = latest.cp_ma250;
+      const techHtml = ts.length
+        ? ts.map(t => `<div>• ${esc(t)}</div>`).join('')
+        : '—';
+      const cp850Line = cp850 != null ? num(cp850, 2) : '—';
+      const cp250Line = cp250 != null ? num(cp250, 2) : '—';
+
+      // 综合信号
+      const compAction = latest.comp_action || '';
+      const compReason = latest.comp_reason || '';
+      const compHtml = compAction
+        ? `<strong class="tag-${compAction === 'buy' ? 'buy' : compAction === 'hold' ? 'hold' : compAction === 'reduce' ? 'sell' : 'watch'}">${esc(compAction)}</strong> ${esc(compReason)}`
+        : '—';
+
       document.getElementById('metricRow').innerHTML = `
         <div class="metric-card"><div class="label">最新日期</div><strong>${esc(latest.date || '-')}</strong></div>
         <div class="metric-card"><div class="label">PE / 分位</div><strong>${num(latest.pe)} · ${pct(latest.pe_percentile)}</strong></div>
         <div class="metric-card"><div class="label">PB / 分位</div><strong>${num(latest.pb)} · ${pct(latest.pb_percentile)}</strong></div>
+        <div class="metric-card"><div class="label">PE vs 5年均值</div><strong>${peLine}</strong></div>
+        <div class="metric-card"><div class="label">PB vs 5年均值</div><strong>${pbLine}</strong></div>
+        <div class="metric-card"><div class="label">偏离兴趣区(本指数)</div><strong>${interest}</strong><div class="label" style="margin-top:6px">${esc(md.interest_note || '相对本指数历史正/负偏离极值')}</div></div>
         <div class="metric-card"><div class="label">点位</div><strong>${num(latest.cp, 2)}</strong></div>
+        <div class="metric-card"><div class="label">双均线低估信号</div>${daHtml}</div>
+        <div class="metric-card"><div class="label">850线 / 250年线</div><strong>${cp850Line}<span style="color:#8fa0c5;font-size:12px"> / ${cp250Line}</span></strong><div class="label" style="margin-top:4px">${techHtml}</div></div>
+        <div class="metric-card" style="grid-column:span 2"><div class="label">综合信号（分位+均线+技术+兴趣）</div><div>${compHtml}</div></div>
         <div class="metric-card"><div class="label">相关文章</div><strong>${detail.article_count || (detail.articles || []).length || 0}</strong></div>
         <div class="metric-card"><div class="label">长赢150买卖</div><strong class="tag-buy">${detail.buy_count || 0}买</strong><span style="color:#8fa0c5"> / </span><strong class="tag-sell">${detail.sell_count || 0}卖</strong><div class="label" style="margin-top:6px">图上可见 ${vis} 点${out ? ` · 窗外 ${out}` : ''}</div></div>`;
       document.getElementById('pbOnlyBanner').classList.toggle('show', !!detail.pb_only);
@@ -431,9 +518,12 @@
         const span = (detail.effective_start && detail.effective_end)
           ? `${detail.effective_start} ~ ${detail.effective_end}`
           : ((detail.available_start && detail.available_end) ? `${detail.available_start} ~ ${detail.available_end}` : '-');
+        const mdHint = md.interest_score != null
+          ? ` · 5y偏离兴趣 ${md.interest_score}/${esc(md.interest_level||'')}`
+          : '';
         hint.textContent = `绿B=买 红S=卖 · 历史共 ${(detail.buy_count||0)+(detail.sell_count||0)} 笔（${detail.buy_count||0}买/${detail.sell_count||0}卖）· 当前窗口图上 ${vis} 点`
           + (out ? ` · ${out} 笔在窗口外` : '')
-          + ` · 本地最长约 ${avail}（${span}）`;
+          + ` · 本地最长约 ${avail}（${span}）` + mdHint;
       }
     }
 
@@ -447,7 +537,10 @@
       const dates = rows.map(r => r.date);
       const cpMarks = buildCpMarkPoints(detail);
       if (charts.overlay) charts.overlay.setOption(overlayOption(detail), true);
-      if (charts.cp) charts.cp.setOption(lineOption('点位', dates, rows.map(r => r.cp), '#ffd166', cpMarks), true);
+      if (charts.cp) charts.cp.setOption(lineOption('点位', dates, rows.map(r => r.cp), '#ffd166', cpMarks, {
+        ma850: { data: rows.map(r => r.cp_ma850), color: '#ff6b6b', name: 'MA850' },
+        ma250: { data: rows.map(r => r.cp_ma250), color: '#f59e0b', name: 'MA250' },
+      }), true);
       if (charts.pe) charts.pe.setOption(lineOption('PE', dates, rows.map(r => r.pe), '#69d2ff'), true);
       if (charts.pb) charts.pb.setOption(lineOption('PB', dates, rows.map(r => r.pb), '#18c37e'), true);
     }

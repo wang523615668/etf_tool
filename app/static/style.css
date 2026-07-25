@@ -297,6 +297,17 @@ select {
   font-size: 12px;
 }
 
+.double-avg-badge {
+  display: inline-block;
+  background: rgba(24, 195, 126, 0.15);
+  color: #18c37e;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 999px;
+  margin-bottom: 8px;
+}
+
 .valuation-metrics {
   display: grid;
   grid-template-columns: 1fr 1fr;

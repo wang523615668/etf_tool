@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+import yaml
 from collections import defaultdict
 from datetime import date, datetime
 from pathlib import Path
@@ -32,18 +33,86 @@ from app.account_ledger import (
     format_daily_push,
     ledger_snapshot,
     load_account,
+    market_position_guide,
     save_account,
 )
 
 BASE = Path(__file__).resolve().parents[1]
 DATA = BASE / "data"
 STATIC = BASE / "app" / "static"
-JZTZ_BASE = Path("/vol1/1000/openzl/jztz")
+CONFIG_FILE = BASE / "config.yaml"
+
+# 加载配置
+def load_config() -> dict[str, Any]:
+    """加载配置文件，返回配置字典，文件不存在时返回默认配置"""
+    default_config = {
+        "paths": {
+            "jztz_base": "/vol1/1000/openzl/jztz",
+            "topic_index": str(BASE / "data" / "topic_index.json"),
+            "cache_dir": "cache",
+            "data_dir": "data",
+        },
+        "api": {
+            "host": "127.0.0.1",
+            "port": 8888,
+        },
+        "decision": {
+            "buy_cooldown_days": 30,
+            "buy_drop_resume_pct": 0.10,
+            "sell_cooldown_days": 30,
+            "sell_rise_resume_pct": 0.10,
+            "match_by_category": True,
+            "category_cap_pct": 0.25,
+        },
+        "market_position": {
+            "index_name": "A股全指",
+            "window_years": 10,
+        },
+        "data_sources": {
+            "lixinger": {
+                "history_years": 20,
+                "percentile_years": 5,
+                "fetch_chunk_days": 730,
+                "series_ttl": 86400,
+                "snapshot_ttl": 604800,
+            }
+        },
+    }
+    
+    if CONFIG_FILE.exists():
+        try:
+            with open(CONFIG_FILE, "r", encoding="utf-8") as f:
+                user_config = yaml.safe_load(f) or {}
+                # 合并用户配置到默认配置
+            merged = {**default_config, **user_config}
+            # 合并嵌套字典
+            for key, value in user_config.items():
+                if isinstance(value, dict) and isinstance(default_config.get(key), dict):
+                    merged[key] = {**default_config[key], **value}
+            return merged
+        except Exception as e:
+            # 配置文件解析失败时使用默认配置
+            print(f"Warning: 配置文件解析失败，使用默认配置: {e}")
+            return default_config
+    return default_config
+
+CONFIG = load_config()
+
+# 从配置解析路径，支持相对路径
+def resolve_path(path_str: str | None) -> Path:
+    """解析路径字符串，支持相对于BASE的相对路径"""
+    if not path_str:
+        return BASE
+    path = Path(path_str)
+    if not path.is_absolute():
+        path = BASE / path
+    return path
+
+JZTZ_BASE = resolve_path(CONFIG["paths"]["jztz_base"])
 JZTZ_OUTPUTS = JZTZ_BASE / "daily_outputs"
 JZTZ_MARKET_DATA = JZTZ_BASE / "market_data"
-TOPIC_INDEX = Path("/vol1/1000/openzl/qieman_etf/topic整理/topic_index.json")
-if not TOPIC_INDEX.exists():
-    TOPIC_INDEX = BASE / "data" / "topic_index.json"
+TOPIC_INDEX = resolve_path(CONFIG["paths"]["topic_index"])
+CACHE_DIR = resolve_path(CONFIG["paths"]["cache_dir"])
 ED_TALKS = DATA / "ed_talks.json"
 INDEX_KNOWLEDGE = DATA / "index_knowledge.json"
 CALIBRATION_WINDOW_DAYS = 45
@@ -741,6 +810,7 @@ def api_summary() -> dict[str, Any]:
     filtered = apply_execution_filter(priced)
     suppressed = filtered.get("suppressed_signals") or []
     active = filtered.get("signals") or []
+    ledger_snap = ledger_snapshot(valuation.get("rows") or [])
     return {
         "generated_at": long_win.get("generated_at"),
         "data_source": valuation.get("data_source") or long_win.get("source") or "local",
@@ -768,12 +838,13 @@ def api_summary() -> dict[str, Any]:
         "topic_library": {
             key: value for key, value in topic_library(limit_per_topic=0).items() if key != "topics"
         },
-        "ledger": ledger_snapshot(valuation.get("rows") or []),
+        "ledger": ledger_snap,
         "action_sheet": action_sheet(
             signals=active,
             suppressed=suppressed,
             valuation_rows=valuation.get("rows") or [],
         ),
+        "market_position": ledger_snap.get("market_position"),
     }
 
 
@@ -781,6 +852,16 @@ def api_summary() -> dict[str, Any]:
 def api_ledger() -> dict[str, Any]:
     valuation = valuation_dashboard()
     return ledger_snapshot(valuation.get("rows") or [])
+
+
+@app.get("/api/market-position")
+def api_market_position() -> dict[str, Any]:
+    """A股全指 → 目标总仓位（只读本地缓存）。"""
+    valuation = valuation_dashboard()
+    snap = ledger_snapshot(valuation.get("rows") or [])
+    return snap.get("market_position") or market_position_guide(
+        positions_summary=snap.get("summary")
+    )
 
 
 @app.get("/api/account")

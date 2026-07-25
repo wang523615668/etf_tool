@@ -15,16 +15,21 @@ BASE = Path(__file__).resolve().parents[1]
 DATA = BASE / "data"
 MY_TRADES = DATA / "my_trades.json"
 
+# 从CONFIG读取，有默认值
+try:
+    from app.main import CONFIG, BUY_COOLDOWN_DAYS, BUY_DROP_RESUME_PCT, SELL_COOLDOWN_DAYS, SELL_RISE_RESUME_PCT
+except ImportError:
+    # 如果main导入失败，使用默认值
+    BUY_COOLDOWN_DAYS = 30
+    BUY_DROP_RESUME_PCT = 0.10
+    SELL_COOLDOWN_DAYS = 30
+    SELL_RISE_RESUME_PCT = 0.10
+
 DEFAULT_SETTINGS = {
-    # after a personal buy, suppress same-direction buy for N calendar days
-    # 30 days ≈ 1 month (time OR space)
-    "buy_cooldown_days": 30,
-    # re-open buy only if price fell this much from entry (0.10 = 10%)
-    "buy_drop_resume_pct": 0.10,
-    # after a personal sell/reduce, suppress same-direction reduce for N days
-    "sell_cooldown_days": 30,
-    "sell_rise_resume_pct": 0.10,
-    # match by name / code / category
+    "buy_cooldown_days": BUY_COOLDOWN_DAYS,
+    "buy_drop_resume_pct": BUY_DROP_RESUME_PCT,
+    "sell_cooldown_days": SELL_COOLDOWN_DAYS,
+    "sell_rise_resume_pct": SELL_RISE_RESUME_PCT,
     "match_by_category": True,
 }
 
