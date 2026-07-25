@@ -23,29 +23,33 @@ DATA = BASE / "data"
 ACCOUNT_FILE = DATA / "my_account.json"
 
 # 决策参数配置（从配置读取，有默认值）
-MARKET_INDEX_NAME = CONFIG["market_position"]["index_name"]
-MARKET_WINDOW_YEARS = float(CONFIG["market_position"]["window_years"])
-BUY_COOLDOWN_DAYS = CONFIG["decision"]["buy_cooldown_days"]
-BUY_DROP_RESUME_PCT = CONFIG["decision"]["buy_drop_resume_pct"]
-SELL_COOLDOWN_DAYS = CONFIG["decision"]["sell_cooldown_days"]
-SELL_RISE_RESUME_PCT = CONFIG["decision"]["sell_rise_resume_pct"]
-CATEGORY_CAP_PCT = CONFIG["decision"]["category_cap_pct"]
+try:
+    from app.main import CONFIG
+    MARKET_INDEX_NAME = CONFIG["market_position"]["index_name"]
+    MARKET_WINDOW_YEARS = float(CONFIG["market_position"]["window_years"])
+    BUY_COOLDOWN_DAYS = CONFIG["decision"]["buy_cooldown_days"]
+    BUY_DROP_RESUME_PCT = CONFIG["decision"]["buy_drop_resume_pct"]
+    SELL_COOLDOWN_DAYS = CONFIG["decision"]["sell_cooldown_days"]
+    SELL_RISE_RESUME_PCT = CONFIG["decision"]["sell_rise_resume_pct"]
+    CATEGORY_CAP_PCT = CONFIG["decision"]["category_cap_pct"]
+except ImportError:
+    # 默认值，当app.main不可用时使用
+    MARKET_INDEX_NAME = "A股全指"
+    MARKET_WINDOW_YEARS = 10.0
+    BUY_COOLDOWN_DAYS = 30
+    BUY_DROP_RESUME_PCT = 0.10
+    SELL_COOLDOWN_DAYS = 30
+    SELL_RISE_RESUME_PCT = 0.10
+    CATEGORY_CAP_PCT = 0.25
 
 DEFAULT_ACCOUNT = {
     "principal": 1_500_000.0,
     "total_shares": 150,
     "shares_per_buy": 1.0,
-    "category_cap_pct": 0.25,
+    "category_cap_pct": CATEGORY_CAP_PCT,
     "cash": 1_500_000.0,
     "note": "本金150万 / 150份 / 每次1份 / 同类≤25% / 总仓=1−A股全指10年分位",
 }
-
-# 从CONFIG读取category_cap_pct，有默认值
-try:
-    from app.main import CONFIG
-    CATEGORY_CAP_PCT = CONFIG["decision"]["category_cap_pct"]
-except ImportError:
-    CATEGORY_CAP_PCT = 0.25
 
 # 更新默认配置中的cap值
 DEFAULT_ACCOUNT["category_cap_pct"] = CATEGORY_CAP_PCT
