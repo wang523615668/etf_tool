@@ -81,7 +81,7 @@ def ed_analysis(rows: list[dict], latest_date: str) -> dict[str, Any]:
         return [m["pb"] for m in me if m["date"] >= d0 and m.get("pb")]
     cur = (rows[-1].get("pe") if rows[-1]["date"] <= latest_date else None)
     cur = next((r["pe"] for r in reversed(rows) if r["date"] == latest_date), None) or cur
-    for yrs, tag in ((5, "5"), (10, "10")):
+    for yrs, tag in ((3, "3"), (5, "5"), (10, "10")):
         w = _win(yrs)
         if len(w) >= 24:
             avg = sum(w) / len(w)
