@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>估值口径标定总览 · ETF 仪表盘</title>
+  <link rel="stylesheet" href="/static/style.css?v=20260725a" />
+  <style>
+    body { background:#0a0f1e; color:#e8ecff; font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif; margin:0; padding:18px; }
+    .wrap { max-width:1180px; margin:0 auto; }
+    h1 { font-size:22px; margin:0 0 6px; }
+    .sub { color:#9aa6c7; font-size:14px; line-height:1.8; margin-bottom:14px; }
+    .sub b { color:#69d2ff; }
+    .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:12px; margin-bottom:18px; }
+    .metric-card { background:#111831; border:1px solid #26304f; border-radius:14px; padding:14px; }
+    .metric-card .label { color:#9aa6c7; font-size:13px; }
+    .metric-card strong { display:block; margin-top:6px; font-size:20px; }
+    table { width:100%; border-collapse:collapse; font-size:13.5px; }
+    th,td { padding:9px 8px; border-bottom:1px solid #1e2740; text-align:right; white-space:nowrap; }
+    th:first-child,td:first-child { text-align:left; }
+    th { color:#9aa6c7; font-weight:600; position:sticky; top:0; background:#0a0f1e; }
+    tr:hover td { background:#111831; }
+    .ok { color:#4ade80; } .warn { color:#ffd166; } .bad { color:#f87171; }
+    .pill { display:inline-block; padding:1px 7px; border-radius:8px; background:#1b2540; color:#9aa6c7; font-size:12px; margin-left:4px; }
+    a.back { color:#69d2ff; text-decoration:none; font-size:14px; }
+    .anchors { color:#9aa6c7; font-size:12px; line-height:1.6; white-space:normal; }
+    @media (max-width:700px){
+      table { font-size:12.5px; } th,td { padding:7px 5px; }
+      .hide-sm { display:none; }
+    }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1>估值口径标定总览</h1>
+  <div class="sub" id="sub">加载中…</div>
+  <div class="cards" id="cards"></div>
+  <div style="overflow-x:auto">
+    <table id="tbl">
+      <thead><tr>
+        <th>指数</th><th>复刻口径</th><th>邮件表<br>平均差</th><th>样本</th>
+        <th>微博锚点<br>平均差</th><th>条数</th><th>逐年偏差(邮件)</th>
+        <th class="hide-sm">5年分位<br>(主口径)</th><th class="hide-sm">分位敏感区间</th>
+      </tr></thead>
+      <tbody></tbody>
+    </table>
+  </div>
+  <div class="sub" style="margin-top:16px">
+    真值源：E大 邮件估值表 OCR（2019-12~2023-03，72 个日期）＋ 他微博/公众号正文里的亲口读数（2018-01~2025-09，18 条锚点，含「2024-11-25 全指信息 62 倍」等）。<br>
+    逐年偏差=各年「我方−他」的中位差；≤6% 视为复刻到位。<b>分位敏感区间</b>=同一算法换「另一名单口径」（当时成分 ↔ 当前成分）后分位数的区间，代表名单口径带来的不确定度。
+  </div>
+</div>
+<script>
+const KC = v => v == null ? '—' : v;
+function cls(v, good=6, mid=12){ if(v==null) return 'warn'; return v<=good?'ok':(v<=mid?'warn':'bad'); }
+async function main(){
+  let cal={items:[]}, sd={items:[]};
+  try { cal = await (await fetch('/api/self-calibration')).json(); } catch(e){}
+  try { sd  = await (await fetch('/api/self-daily')).json(); } catch(e){}
+  const sdMap = {}; (sd.items||[]).forEach(i => sdMap[i.name] = i);
+  document.getElementById('sub').innerHTML =
+    `真值 <b>${cal.truth ? cal.truth.email_dates : 72} 个邮件日期 + ${cal.truth ? cal.truth.prose_anchors : 18} 条微博锚点</b> · ` +
+    `共 <b>${cal.total||0}</b> 个指数口径 · 逐年偏差 ≤6% 的 <b>${cal.within6pct||0}</b> 个`;
+  const items = cal.items || [];
+  const within = items.filter(x => x.peryear != null && x.peryear <= 6).length;
+  const best = items.slice().filter(x=>x.peryear!=null).sort((a,b)=>a.peryear-b.peryear)[0] || {};
+  const worst = items.slice().filter(x=>x.peryear!=null).sort((a,b)=>b.peryear-a.peryear)[0] || {};
+  document.getElementById('cards').innerHTML = `
+    <div class="metric-card"><div class="label">复刻到位(≤6%)</div><strong class="ok">${within}/${items.length}</strong><div class="label">按「逐年偏差」判据</div></div>
+    <div class="metric-card"><div class="label">最贴合</div><strong>${KC(best.peryear)}%</strong><div class="label">${best.name||'—'} · ${best.algo||''}</div></div>
+    <div class="metric-card"><div class="label">最大缺口</div><strong class="bad">${KC(worst.peryear)}%</strong><div class="label">${worst.name||'—'} · 行业历史名单缺失所致</div></div>
+    <div class="metric-card"><div class="label">标定时间</div><strong style="font-size:15px">${(sd.items||[]).find(x=>x.calib_at)?.calib_at || '—'}</strong><div class="label">每个交易日 17:30 自动重算</div></div>`;
+  const tb = document.querySelector('#tbl tbody');
+  tb.innerHTML = items.map(x => {
+    const s = sdMap[x.name] || {};
+    const yr = x.years ? Object.entries(x.years).map(([k,v])=>`${k.slice(2)}:${v>0?'+':''}${v}%`).join(' ') : '—';
+    const p5 = s.p5y, p5s = s.p5y_shadow;
+    let rng = '—';
+    if (p5 != null && p5s != null) rng = (Math.abs(p5-p5s) < 1) ? `<span class="pill">口径一致</span>` :
+      `${Math.min(p5,p5s).toFixed(0)}% ~ ${Math.max(p5,p5s).toFixed(0)}%`;
+    return `<tr>
+      <td>${x.name}</td>
+      <td style="text-align:left">${x.algo||''}<span class="pill">${x.list_mode||''}</span></td>
+      <td class="${cls(x.peryear)}">${KC(x.peryear)}%</td>
+      <td>${KC(x.n_hist)}</td>
+      <td class="${cls(x.anchor,6,10)}">${KC(x.anchor)}%</td>
+      <td>${KC(x.n_anch)}</td>
+      <td style="text-align:left;color:#9aa6c7">${yr}</td>
+      <td class="hide-sm">${KC(p5)}%</td>
+      <td class="hide-sm">${rng}</td>
+    </tr>`;
+  }).join('');
+}
+main();
+</script>
+</body>
+</html>

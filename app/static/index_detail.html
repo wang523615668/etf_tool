@@ -161,6 +161,7 @@
     <a href="/#calibration">规则校准池</a>
     <a href="/#topics">主题知识库</a>
     <a href="/index-detail?t=20260723d" style="border-top:1px solid #2d3148;margin-top:8px;padding-top:8px;color:#f59e0b">📊 指数估值详情</a>
+    <a href="/self-calib" style="color:#f59e0b">🎯 估值口径标定总览</a>
   </aside>
   <main class="main">
     <section class="hero">
@@ -639,9 +640,28 @@
           <div class="metric-card"><div class="label">5年分位(自算)</div><strong>${pctBadge(self.p5y)}</strong></div>
           <div class="metric-card"><div class="label">10年分位(自算)</div><strong>${pctBadge(self.p10y)}</strong></div>
           <div class="metric-card"><div class="label">与理杏仁偏差</div><strong>${dev == null ? '—(日不同)' : (dev>=0?'+':'') + dev.toFixed(1) + '%'}</strong><div class="label">${dev == null ? '' : Math.abs(dev) > 15 ? '口径差·勿直接比分位' : '水平接近'}</div></div>
+          ${(self.ed_dev_med != null || self.ed_anch_med != null) ? `<div class="metric-card" style="flex:1 1 100%"><div class="label">与E大真值对照（本地测算，日更）</div>
+            <div style="display:flex;gap:14px;flex-wrap:wrap;margin-top:4px">
+              ${self.ed_dev_med != null ? `<div><div class="label">邮件估值表</div><strong>${self.ed_dev_med}%</strong><div class="label">平均差 · ${self.ed_dev_n}个日期 · 最大 ${self.ed_dev_max}%</div></div>` : ''}
+              ${self.ed_anch_med != null ? `<div><div class="label">他微博亲口读数</div><strong>${self.ed_anch_med}%</strong><div class="label">平均差 · ${self.ed_anch_n}条锚点 · 最大 ${self.ed_anch_max}%</div></div>` : ''}
+            </div>
+            <div class="label" style="margin-top:6px">${(self.ed_dev_med!=null&&self.ed_dev_med<=6)?'口径已复刻到免费数据可及的精度上限':'存在口径差，分位仅供参考'}</div></div>` : ''}
+          ${(self.p5y_shadow != null && self.p5y != null && Math.abs(self.p5y_shadow - self.p5y) >= 1) ? `<div class="metric-card" style="flex:1 1 100%"><div class="label">分位敏感区间（口径不确定度）</div>
+            <strong>5年 ${Math.min(self.p5y,self.p5y_shadow).toFixed(1)}% ~ ${Math.max(self.p5y,self.p5y_shadow).toFixed(1)}%</strong>
+            <div class="label">另一口径：${esc((self.shadow_algo||'') + (self.shadow_list ? ' · ' + ({pit:'当时成分(还原)',current:'当前成分(固定)',mktcap:'市值重建成分',bspit:'月度名单'})[self.shadow_list] || self.shadow_list : ''))}${self.pe_shadow != null ? ' · 当前PE '+Number(self.pe_shadow).toFixed(1) : ''}；其5年分位 ${self.p5y_shadow}%、10年 ${self.p10y_shadow != null ? self.p10y_shadow : '—'}%${self.p10y != null ? ' · 本口径10年 '+self.p10y+'%' : ''} · 差值=口径不确定度，勿当精确分位使用</div></div>` : ''}
           <div class="metric-card" style="flex:1 1 100%"><div class="label">自算PE走势(近500日)</div>${spark}</div>
-          ${self.method ? `<div class="metric-card" style="flex:1 1 100%"><div class="label">口径</div><div class="label" style="font-size:12px;line-height:1.7;text-align:left">${esc(self.method)}${self.pit ? '<br>· 成分按月份 as-of 变动, 历史分位已按当时名单重算; 与旧"冻结名单"版分位不可直接比较(如中证500 5年分位由 26.5% 修正为 73.5%)<br>· 名单源 baostock 批次最多滞后约4个月, 宽基序列残留约 ±4% 系统偏差' : '<br>· 行业/策略指数暂无免费 as-of 名单, 成分按当前名单固定, 存在名单漂移(与E大表对数字偏差 6~32%)<br>· 本序列分位仅作自身历史纵向比较, 不要与E大表或第三方同日数值横比'}</div></div>` : ''}`;
-        meta.textContent = `${self.days}个交易日 · 成分${(latest.n||'')}只 · ${self.pit ? 'PIT' : '当前成分'}`;
+          ${self.method ? `<div class="metric-card" style="flex:1 1 100%"><div class="label">口径</div><div class="label" style="font-size:12px;line-height:1.7;text-align:left">${esc(self.method)}${(() => {
+            const mode = self.list_mode || (self.pit ? 'bspit' : 'current');
+            let note = '';
+            if (mode === 'pit') note = '<br>· 成分按当时名单(纳入日期)还原, 历史分位已按当时名单重算';
+            else if (mode === 'bspit') note = '<br>· 成分按当时名单(月度名单)还原, 历史分位已按当时名单重算<br>· 名单批次最多滞后约4个月, 宽基序列残留约 ±4% 系统偏差';
+            else if (mode === 'mktcap') note = '<br>· 成分按当日市值排名还原(自建名单, 非官方成分股), 历史分位已按当时名单重算';
+            else note = '<br>· 暂无免费历史名单, 成分按当前名单固定, 存在名单漂移';
+            if (self.ed_dev_max != null) note += ` · 与E大表对照(2019-12~2023-03, ${self.ed_dev_n||''}个日期): 平均差 ${self.ed_dev_med}% / 最大差 ${self.ed_dev_max}%`;
+            else note += '<br>· 本序列分位仅作自身历史纵向比较, 不要与第三方同日数值横比';
+            return note;
+          })()}</div></div>` : ''}`;
+        meta.textContent = `${self.days}个交易日 · 成分${(latest.n||'')}只 · ${({pit:'当时成分',bspit:'当时成分',mktcap:'市值重建成分',current:'当前成分'})[self.list_mode || (self.pit?'bspit':'current')] || '当前成分'}`;
       } catch (e) { /* 静默 */ }
     }
 

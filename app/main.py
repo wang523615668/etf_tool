@@ -915,6 +915,15 @@ def index_detail_page() -> str:
         return "<h1>index detail page missing</h1>"
     return page.read_text(encoding="utf-8")
 
+
+@app.get("/self-calib", response_class=HTMLResponse)
+def self_calib_page() -> str:
+    """估值口径标定总览: 逐指数「与E大真值」的偏差 + 分位敏感区间。"""
+    page = STATIC / "self_calib.html"
+    if not page.exists():
+        return "<h1>self calib page missing</h1>"
+    return page.read_text(encoding="utf-8")
+
 @app.get("/api/summary")
 def api_summary() -> dict[str, Any]:
     long_win = load_json("long_win_positions.json")
@@ -1237,7 +1246,10 @@ def api_index_list() -> dict[str, Any]:
 @app.get("/api/self-daily")
 def api_self_daily() -> dict[str, Any]:
     """自算估值序列索引: 全部自选指数 + 全市场主板(A股E大口径), 2018→今日频.
-    方法=当日全A快照(东财PE_TTM/PB_MRQ)×当前成分·剔亏损·取中位数; PIT历史待回填."""
+    方法=逐指数最优组合(算法×名单源, 见 data/ed_perindex_best.json):
+    真值源=E大 邮件估值表 OCR(2019-12~2023-03, 72 日期) + 他微博亲口读数(2018~2025, 18 锚点),
+    逐指数按「逐年偏差中位」挑口径(见 data/ed_calibration.json)。
+    p5y_shadow/p10y_shadow=另一名单口径(当时成分↔当前成分)下的分位, 即口径不确定度区间。"""
     d = BASE / "data" / "self_daily"
     out = []
     if not d.exists():
@@ -1254,10 +1266,46 @@ def api_self_daily() -> dict[str, Any]:
             "latest": j.get("latest"), "p5y": j.get("p5y"), "p10y": j.get("p10y"),
             "days": len(j.get("rows") or []),
             "pit": j.get("pit", False), "method": j.get("method"), "note": j.get("note"),
+            "algo": j.get("algo"), "list_mode": j.get("list_mode"),
+            "ed_dev_max": j.get("ed_dev_max"), "ed_dev_med": j.get("ed_dev_med"),
+            "ed_dev_n": j.get("ed_dev_n"), "ed_dev_six": j.get("ed_dev_six"),
+            "ed_anch_n": j.get("ed_anch_n"), "ed_anch_med": j.get("ed_anch_med"),
+            "ed_anch_max": j.get("ed_anch_max"),
+            "p5y_shadow": j.get("p5y_s"), "p10y_shadow": j.get("p10y_s"),
+            "pe_shadow": j.get("pe_shadow"), "shadow_algo": j.get("shadow_algo"),
+            "shadow_list": j.get("shadow_list"), "shadow_days": j.get("shadow_days"),
+            "calib_at": j.get("calib_at"),
         })
     out.sort(key=lambda x: (x["code"] in ("000985", "MKT_MAIN", "MKT_ALL"), x["name"] or ""))
     return {"total": len(out), "items": out,
             "generated_max": max((x["latest"]["date"] if x.get("latest") else "" for x in out), default="")}
+
+
+@app.get("/api/self-calibration")
+def api_self_calibration() -> dict[str, Any]:
+    """自算估值的标定报告: 逐指数口径 + 与E大真值的偏差(邮件估值表72日期 + 他微博亲口读数18条锚点)。
+    由 app/self_daily_calib.py 日更写入 data/ed_calibration.json。"""
+    fp = BASE / "data" / "ed_calibration.json"
+    if not fp.exists():
+        return {"items": [], "note": "标定报告尚未生成"}
+    try:
+        j = json.loads(fp.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return {"items": [], "error": str(exc)}
+    items = []
+    for name, v in j.items():
+        items.append({
+            "name": name, "algo": v.get("algo"), "list_mode": v.get("list"),
+            "score": v.get("score"), "peryear": v.get("peryear"),
+            "hist_mad": v.get("hist_mad"), "n_hist": v.get("n_hist"),
+            "anchor": v.get("anchor"), "n_anch": v.get("n_anch"),
+            "years": v.get("yr"), "anchors": v.get("anchors"),
+        })
+    items.sort(key=lambda x: (x["score"] is None, x["score"] or 99))
+    ok = [x for x in items if (x["peryear"] or 99) <= 6]
+    return {"total": len(items), "within6pct": len(ok), "items": items,
+            "truth": {"email_dates": 72, "prose_anchors": 18,
+                      "window": "2019-12~2023-03(邮件表) + 2018-01~2025-09(微博锚点)"}}
 
 
 @app.get("/api/self-daily/{code}")
