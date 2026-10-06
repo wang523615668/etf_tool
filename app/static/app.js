@@ -53,7 +53,7 @@ function renderCards(data) {
   const statsS = data.stats.long_win_s;
   const latestDate = data.recent_actions[0]?.date || '-';
   const valuation = data.valuation_freshness || {};
-  const sourceLabel = data.data_source === 'lixinger' ? '理杏仁' : (data.data_source || 'local');
+  const sourceLabel = data.data_source === 'lixinger' ? '理杏仁' : (data.data_source === 'self' ? '自算引擎' : (data.data_source || 'local'));
   const sm = data.ledger?.summary || {};
   const mp = data.market_position || data.ledger?.market_position || {};
   const tgt = mp.target_position_pct != null ? (mp.target_position_pct * 100).toFixed(1) + '%' : '-';
@@ -734,8 +734,8 @@ async function init() {
     if (event.target?.id === 'reasonModal') closeReasonModal();
   });
 
-  // 估值数据源切换（理杏仁 / 且慢）
-  let valuationSource = 'lixinger';
+  // 估值数据源切换（自算 / 理杏仁 / 且慢）
+  let valuationSource = 'self';
   const switchBox = document.getElementById('valuationSourceSwitch');
   if (switchBox) {
     switchBox.addEventListener('click', async (event) => {

@@ -607,10 +607,16 @@ def _valuation_action(pe_pct: float | None, pb_pct: float | None, stale: bool) -
     return "watch", "估值中性，等待更好赔率"
 
 
-def valuation_rows(source: str = "lixinger") -> list[dict[str, Any]]:
+DEFAULT_VAL_SOURCE = "self"   # 首页/决策/台账统一默认: 自算引擎(E大表标定)
+
+
+def valuation_rows(source: str = DEFAULT_VAL_SOURCE) -> list[dict[str, Any]]:
     """Prefer 理杏仁; fallback 且慢; then local JZTZ matrix if present.
-    source='qieman' 时用且慢口径（8年百分位 + 强周期PB）"""
-    source = (source or "lixinger").lower()
+    source='qieman' 时用且慢口径（8年百分位 + 强周期PB）; source='self' 用自算引擎(E大表标定)"""
+    source = (source or DEFAULT_VAL_SOURCE).lower()
+    if source == "self":
+        dash = valuation_dashboard(source="self")
+        return dash.get("rows") or []
     if source == "qieman":
         # 且慢真实估值数据（每日 Playwright 抓取缓存）
         try:
@@ -737,8 +743,32 @@ _VAL_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
 _VAL_CACHE_TTL = 180.0
 
 
-def valuation_dashboard(source: str = "lixinger") -> dict[str, Any]:
-    source = (source or "lixinger").lower()
+
+
+def valuation_dashboard(source: str = DEFAULT_VAL_SOURCE) -> dict[str, Any]:
+    source = (source or DEFAULT_VAL_SOURCE).lower()
+    if source == "self":
+        # 自算引擎主列表: 先取理杏仁行(保留品种/代码), 再用 self_daily 序列覆盖 pe/pb/分位/动作
+        base = valuation_dashboard(source="lixinger")
+        try:
+            from app.data_sources.self_main_valuations import apply_self_valuations
+            rows, covered = apply_self_valuations(list(base.get("rows") or []))
+            groups = {"buy": [], "watch": [], "hold": [], "reduce": [], "pause": []}
+            for row in rows:
+                groups.setdefault(str(row.get("action") or "watch"), []).append(row)
+            priority = {"buy": 0, "watch": 1, "hold": 2, "reduce": 3, "pause": 4}
+            rows.sort(key=lambda row: (priority.get(row.get("action"), 9),
+                                       row.get("temperature") if row.get("temperature") is not None else 999))
+            base.update({
+                "rows": rows, "total": len(rows),
+                "counts": {k: len(v) for k, v in groups.items()},
+                "top": {k: groups[k][:6] for k in ("buy", "watch", "hold", "reduce")},
+                "data_source": "self",
+                "self_note": f"自算引擎覆盖 {covered}/{len(rows)} 行(序列日更 17:30)",
+            })
+        except Exception as exc:
+            base.setdefault("freshness", {})["self_error"] = str(exc)[:160]
+        return base
     now = time.time()
     hit = _VAL_CACHE.get(source)
     if hit and now - hit[0] < _VAL_CACHE_TTL:
@@ -1214,12 +1244,12 @@ def api_batter_score(force: int = 0) -> dict[str, Any]:
 
 
 @app.get("/api/valuations")
-def api_valuations(source: str = "lixinger") -> dict[str, Any]:
+def api_valuations(source: str = DEFAULT_VAL_SOURCE) -> dict[str, Any]:
     return valuation_dashboard(source=source)
 
 
 @app.get("/api/decision")
-def api_decision(source: str = "lixinger") -> dict[str, Any]:
+def api_decision(source: str = DEFAULT_VAL_SOURCE) -> dict[str, Any]:
     """自主决策引擎：估值温度 + E大历史模式 + 我的持仓 → 品种级建议"""
     try:
         from app.decision_engine import build_decision_table

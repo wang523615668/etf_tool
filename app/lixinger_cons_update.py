@@ -56,7 +56,7 @@ def main():
             r = fetch([code], d)
             v = r.get(code)
             if not v:
-                continue
+                continue                      # 空=该日无此指数(未发布/无数据), 绝不落点
             # 只在成员集合变化时落点(压缩存储)
             prev = [asof[k] for k in sorted(asof) if k <= d]
             if prev and sorted(v) == sorted(prev[-1]):

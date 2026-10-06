@@ -100,6 +100,29 @@ def main():
         self_daily_sync.main()
     except Exception as exc:
         print(f"口径自愈跳过: {exc}")
+    # 防御性清理: 名单表的空快照(理杏仁对未发布指数会返回空) 必须在口径自愈前移除,
+    # 否则空名单点会让该指数所有 as-of 查询拿到 [] → 序列断点 / 名单源退化
+    try:
+        fp = f"{BASE}/data/ed_cons_lixinger.json"
+        lj = json.load(open(fp))
+        cleaned = 0
+        for rec in lj.values():
+            a = rec.get("asof") or {}
+            empt = [d for d, v in a.items() if not v]
+            for d in empt:
+                del a[d]
+            if empt:
+                rec["changes"] = len(a)
+                rec["snapshots"] = len(a)
+                cleaned += len(empt)
+        if cleaned:
+            import shutil, datetime as _dt
+            ts = _dt.datetime.now().strftime("%Y%m%d-%H%M")
+            shutil.copy(fp, f"{fp}.bak-empt-{ts}")
+            json.dump(lj, open(fp, "w"), ensure_ascii=False)
+            print(f"名单表清理: 移除 {cleaned} 个空快照点 (备份 .bak-empt-{ts})")
+    except Exception as exc:
+        print(f"名单表清理跳过: {exc}")
     date, _ = trade_day()
     if not date:
         print("无新交易日数据"); return
