@@ -14,28 +14,26 @@ DATA = f"{BASE}/data"
 FP = f"{DATA}/ed_cons_lixinger.json"
 API = "https://open.lixinger.com/api/cn/index/constituents"
 
-def token():
-    for p in [f"{BASE}/jztz/token.conf", f"{DATA}/lixinger_token.conf"]:
-        if os.path.exists(p):
-            t = open(p).read().strip()
-            try:
-                j = json.loads(t)
-                return j.get("token") or list(j.values())[0]
-            except Exception:
-                return t
-    raise SystemExit("找不到理杏仁 token (jztz/token.conf)")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from data_sources import lixinger as LX          # 复用项目 token 池: 自动轮换 + 失效标记
 
-def fetch(codes, date, tok, tries=3):
-    for k in range(tries):
+def fetch(codes, date):
+    """带 token 轮换的取数: 某个 token 额度/鉴权失败就换下一个(状态落盘, 当日不再重试)"""
+    tried = set()
+    for _ in range(len(LX._load_token_pool())):
+        tok = LX._select_token(exclude=tried)
         try:
-            r = requests.post(API, json={"token": tok, "stockCodes": codes, "date": date}, timeout=120)
-            j = r.json()
-            if j.get("data") is not None:
-                return {it["stockCode"]: [c["stockCode"] for c in (it.get("constituents") or [])]
-                        for it in j["data"]}
+            res = LX._post(API, {"token": tok, "stockCodes": codes, "date": date}, timeout=120)
         except Exception as e:
-            print(f"    {date} 重试{k+1}: {str(e)[:70]}")
-        time.sleep(3 + 3 * k)
+            LX._mark_token_failure(tok, f"HTTP {str(e)[:120]}"); tried.add(tok); continue
+        data = res.get("data")
+        if data is not None:
+            return {it["stockCode"]: [c["stockCode"] for c in (it.get("constituents") or [])]
+                    for it in data}
+        msg = json.dumps(res, ensure_ascii=False)[:160]
+        LX._mark_token_failure(tok, msg, exhausted=("maximum access" in msg or "Forbidden" in msg))
+        tried.add(tok)
+        print(f"    {date} token 失效({msg[:60]}), 换下一个")
     return {}
 
 def main():
@@ -43,7 +41,6 @@ def main():
     ap.add_argument("--days", type=int, default=40, help="向前回补多少个自然日(默认40)")
     a = ap.parse_args()
     j = json.load(open(FP))
-    tok = token()
     today = dt.date.today()
     days = [(today - dt.timedelta(days=i)).isoformat() for i in range(a.days, -1, -1)]
     days = [d for d in days if d >= "2018-01-01"]
@@ -56,7 +53,7 @@ def main():
         for d in days:
             if d in asof:
                 continue                      # 已有该日快照
-            r = fetch([code], d, tok)
+            r = fetch([code], d)
             v = r.get(code)
             if not v:
                 continue
