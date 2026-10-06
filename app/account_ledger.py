@@ -48,7 +48,7 @@ DEFAULT_ACCOUNT = {
     "shares_per_buy": 1.0,
     "category_cap_pct": CATEGORY_CAP_PCT,
     "cash": 1_500_000.0,
-    "note": "本金150万 / 150份 / 每次1份 / 同类≤25% / 总仓=1−A股全指10年分位",
+    "note": "本金150万 / 150份 / 每次1份 / 同类≤25% / 总仓=1−全A等权PE分位",
 }
 
 # 更新默认配置中的cap值
@@ -165,11 +165,39 @@ def build_positions(
     price_map: dict[str, float] | None = None,
     account: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Rebuild positions from trade history (oldest→newest)."""
+    """Rebuild positions from trade history (oldest→newest).
+
+    持仓源（account.position_source）：
+      ed_follow → 「价值投资」跟随E大的150份：直接镜像 data/ed_follow.json
+        （由 scripts/sync_ed_follow.py 每早随发车同步自动对齐），与用户手工
+        my_trades（那是用户自己独立的150万账本）互不干扰。
+      默认/other → 回放 my_trades.json。
+    """
     acc = account or load_account()
     unit = share_unit_value(acc)
     principal = float(acc.get("principal") or DEFAULT_ACCOUNT["principal"])
     cap_pct = float(acc.get("category_cap_pct") or 0.25)
+
+    if str(acc.get("position_source") or "") == "ed_follow" and trades is None:
+        follow = DATA / "ed_follow.json"
+        try:
+            fd = json.loads(follow.read_text(encoding="utf-8"))
+        except Exception:
+            fd = {}
+        fl = list(fd.get("positions") or [])
+        if fl:
+            rows = []
+            for p in fl:
+                sh = float(p.get("shares") or 0)
+                if sh <= 0:
+                    continue
+                rows.append({
+                    "action": "buy", "name": p.get("name"), "code": p.get("code"),
+                    "category": p.get("category") or "", "shares": sh,
+                    "date": p.get("ed_date"),
+                })
+            # build_positions 按 oldest→newest 回放，这里单笔全买无需排序
+            trades = rows
     trades_payload = load_my_trades() if trades is None else {"trades": trades}
     rows = list(trades_payload.get("trades") or [])
     # process chronological
@@ -319,6 +347,10 @@ def build_positions(
         "summary": {
             "invested_cost_rmb": round(total_cost, 2),
             "market_value_rmb": round(total_market, 2),
+            # E大"总仓=1−分位"只约束权益仓位：剔除债券现金组（他原话股债分开配置）
+            "stock_market_value_rmb": round(sum(
+                mkt for g, mkt in group_market.items() if g not in {"债券现金"}
+            ), 2),
             "cash_rmb": round(cash, 2),
             "equity_rmb": round(equity, 2),
             "position_pnl_rmb": round(total_pnl, 2),
@@ -395,6 +427,21 @@ def market_position_guide(
     except Exception as exc:
         error = str(exc)
 
+    # 与 APP 顶部档位卡统一主锚：全A等权PE分位(15年)优先。
+    # ed_quant.market_zone 读同一日更缓存，失败/无数据则回退上面的加权口径。
+    try:
+        import sys as _sys
+        if "/vol1/1000/openzl/finance_app" not in _sys.path:
+            _sys.path.insert(0, "/vol1/1000/openzl/finance_app")
+        import ed_quant as _eq
+        _mz = _eq.market_zone()
+        if _mz and _mz.get("pe_pct") is not None:
+            avg_pct = float(_mz["pe_pct"]) / 100.0
+            pe_pct = avg_pct
+            error = None
+    except Exception:
+        pass
+
     target_pct = None if avg_pct is None else max(0.0, min(1.0, 1.0 - float(avg_pct)))
     target_rmb = None if target_pct is None else principal * target_pct
     target_shares = None if target_pct is None else total_shares * target_pct
@@ -405,7 +452,9 @@ def market_position_guide(
     current_pct = None
     if positions_summary:
         used_shares = positions_summary.get("used_shares")
-        market_value = positions_summary.get("market_value_rmb")
+        market_value = positions_summary.get("stock_market_value_rmb")
+        if market_value is None:
+            market_value = positions_summary.get("market_value_rmb")
         if market_value is not None and principal:
             current_pct = max(0.0, float(market_value) / principal)
         elif used_shares is not None and total_shares:
@@ -482,6 +531,19 @@ def action_sheet(
     principal = float(acc["principal"])
     cap_pct = float(acc["category_cap_pct"])
     per_buy = float(acc.get("shares_per_buy") or 1)
+    per_buy_base = per_buy  # 卖出/止盈份数基准，不受市场水位系数影响
+    # 市场水位系数：generate_local_signals 按E大"均值以上保守一些"在信号行写入
+    # market_factor(0.5/0.7/1.0/1.5)。⚠️份数允许小数（1份=1万，0.7份=7000元）——
+    # 之前 round() 把 1×0.7、1×0.5 又抬回 1 份，减量只存在于文案里（2026-09-25 审计修复）。
+    _mf = 1.0
+    for _s in signals or []:
+        try:
+            _mf = float(_s.get("market_factor") or 1.0)
+            break
+        except Exception:
+            continue
+    if _mf not in (1.0,) and 0.4 <= _mf <= 1.6:
+        per_buy = max(0.5, round(per_buy * _mf, 2))
     snap = build_positions(price_map=_price_map_from_valuation_rows(valuation_rows), account=acc)
     market = market_position_guide(account=acc, positions_summary=snap.get("summary"))
     group_mkt = {g["group"]: g["market_rmb"] for g in snap["groups"]}
@@ -492,6 +554,36 @@ def action_sheet(
     if market.get("over_target"):
         market_headroom_shares = 0.0
     market_ok = market.get("target_position_pct") is not None and market.get("error") is None
+    # E大跟随账本：总仓闸不硬拦。镜像持仓天然"已满"（E大十年攒的95份权益 > 1−分位
+    # 公式的34.8%），若硬拦则永远无法跟随他的下一笔买入——他本人也仍在月月买。
+    # 保守职责已由 ①市场水位系数(×0.5~0.7) ②品种目标仓位闸(signal生成期⛔) 承担。
+    follow_mode = str(acc.get("position_source") or "") == "ed_follow"
+    if follow_mode:
+        market_ok = False
+
+    # E大口径市场拆分（用户：111份含债券/美股港股，A股仓位要单独算）：
+    # 股票类(A+港+海外)≤80%、A+港≤75%、海外≤30% —— 三道硬上限逐条拦截。
+    stock_split: dict[str, float] = {}
+    stock_gate_note = ""
+    try:
+        from app import ed_markets as _em
+        _fl = []
+        _fp = DATA / "ed_follow.json"
+        if _fp.exists():
+            _fl = (json.loads(_fp.read_text(encoding="utf-8")).get("positions") or [])
+        if _fl:
+            stock_split = _em.market_totals(_fl)
+            _allc, _ahc, _osc = 150*0.80, 150*0.75, 150*0.30
+            _stocks = stock_split.get("A股", 0) + stock_split.get("港股", 0) + stock_split.get("海外股票", 0)
+            _ah = stock_split.get("A股", 0) + stock_split.get("港股", 0)
+            if _stocks >= _allc:
+                stock_gate_note = f"股票类{_stocks:g}份≥E大80%上限({_allc:g}份)"
+            elif _ah >= _ahc:
+                stock_gate_note = f"A+港股{_ah:g}份≥E大75%上限({_ahc:g}份)"
+            elif stock_split.get("海外股票", 0) >= _osc:
+                stock_gate_note = f"海外{stock_split.get('海外股票'):g}份≥E大30%上限({_osc:g}份)"
+    except Exception:
+        pass
 
     # recompute filter if raw signals given without cooldown
     if signals is None and suppressed is None:
@@ -517,13 +609,18 @@ def action_sheet(
 
         if action == "buy":
             allowed = min(
-                int(per_buy),
-                max_shares_by_cap,
-                max_shares_by_cash,
-                max_shares_by_pool,
-                max_shares_by_market if market_ok else int(per_buy),
+                per_buy,
+                float(max_shares_by_cap),
+                float(max_shares_by_cash),
+                float(max_shares_by_pool),
+                per_buy if not market_ok else float(max_shares_by_market),
             )
+            allowed = max(0.0, round(allowed, 2))  # 小数份=部分仓（0.7份≈7000元）
+            if stock_gate_note:
+                allowed = 0
             reasons = []
+            if stock_gate_note:
+                reasons.append(stock_gate_note)
             if max_shares_by_cap <= 0:
                 reasons.append(f"同类[{group}]已达/超过{int(cap_pct*100)}%上限")
             if max_shares_by_cash <= 0:
@@ -577,17 +674,21 @@ def action_sheet(
         elif action in {"reduce", "sell"}:
             # allow reduce always if held
             held = next((p for p in snap["positions"] if p["name"] == name or p.get("code") == str(row.get("code") or "").split(".")[0]), None)
-            sh = int(per_buy)
+            # 分档减仓（回测校准）：≥88%极高估→每次2份；70-88%→1份"逐步卖出"
+            # ⚠️卖出量以 per_buy_base(每次基准份数) 为尺度，不吃市场水位减量；
+            # 之前 min(int(per_buy)...) 把 2 份又 clamp 回 1 份，分档失效（2026-09-25 审计修复）。
+            _t = row.get("temperature")
+            sh = per_buy_base * (2 if (_t is not None and float(_t) >= 88) else 1)
             if held:
-                sh = min(int(per_buy), int(held["shares"]) if held["shares"] >= 1 else 0) or int(min(per_buy, held["shares"]))
+                sh = min(sh, float(held["shares"]))
             actions.append(
                 {
                     **row,
                     "group": group,
-                    "suggested_shares": max(sh, 0),
+                    "suggested_shares": round(max(sh, 0), 2),
                     "suggested_amount_rmb": round(max(sh, 0) * unit, 2),
                     "unit_value": unit,
-                    "checklist": f"{'卖出' if action=='sell' else '减仓'} {name} {max(sh,0)} 份",
+                    "checklist": f"{'卖出' if action=='sell' else '减仓'} {name} {round(max(sh,0),2):g} 份",
                     "status": "actionable" if sh > 0 else "no_position",
                 }
             )
@@ -617,6 +718,8 @@ def action_sheet(
         "account": snap["account"],
         "ledger_summary": snap["summary"],
         "market_position": market,
+        "stock_split": stock_split,
+        "stock_gate_note": stock_gate_note,
         "groups": snap["groups"],
         "actions": actions,
         "blocked": blocked,
@@ -640,7 +743,8 @@ def format_daily_push(sheet: dict[str, Any], ledger: dict[str, Any] | None = Non
     actions = [a for a in (sheet.get("actions") or []) if a.get("status") == "actionable" and a.get("action") in {"buy", "sell", "reduce"}]
     blocked = sheet.get("blocked") or []
     cool = sheet.get("cooldown") or []
-    if not actions and not blocked:
+    pending = sheet.get("pending_reminders") or []
+    if not actions and not blocked and not pending:
         # truly nothing — silent
         return None
 
@@ -653,6 +757,16 @@ def format_daily_push(sheet: dict[str, Any], ledger: dict[str, Any] | None = Non
         f"权益 {sm.get('equity_rmb', '—')}｜盈亏 {sm.get('equity_pnl_rmb', '—')}（{round((sm.get('equity_return_pct') or 0)*100, 2)}%）"
         f"｜现金 {sm.get('cash_rmb', '—')}｜已用份 {sm.get('used_shares', '—')}/{acc.get('total_shares', 150)}"
     )
+    sp = sheet.get("stock_split") or {}
+    if sp:
+        _st = sp.get("A股", 0) + sp.get("港股", 0) + sp.get("海外股票", 0)
+        _tot = _st + sp.get("债券", 0) + sp.get("商品", 0)
+        seg = (f"A股 {sp.get('A股', 0):g}份｜港股 {sp.get('港股', 0):g}｜海外 {sp.get('海外股票', 0):g}"
+               f"｜债券 {sp.get('债券', 0):g}｜股票合计 {_st:g}/{_tot:g}份"
+               f"（E大上限: 股票80%=120 · A+港75%=112.5 · 海外30%=45）")
+        if sheet.get("stock_gate_note"):
+            seg += f" ⛔{sheet['stock_gate_note']}"
+        lines.append(seg)
     if mp.get("target_position_pct") is not None:
         tgt = round(float(mp["target_position_pct"]) * 100, 1)
         cur = mp.get("current_position_pct")
@@ -662,7 +776,7 @@ def format_daily_push(sheet: dict[str, Any], ledger: dict[str, Any] | None = Non
         head = mp.get("headroom_shares")
         head_s = "—" if head is None else f"{round(float(head), 1)}份"
         lines.append(
-            f"A股全指10年分位 {avg_s} → 目标总仓 {tgt}% / 当前 {cur_s} / 总仓余量 {head_s}"
+            f"全A等权PE分位(主锚) {avg_s} → 目标总仓 {tgt}% / 当前 {cur_s} / 总仓余量 {head_s}"
             f"（数据 {mp.get('snapshot_date') or '—'}）"
         )
     lines.append("")
@@ -672,6 +786,16 @@ def format_daily_push(sheet: dict[str, Any], ledger: dict[str, Any] | None = Non
             lines.append(f"- {a.get('checklist') or a.get('name')}")
             if a.get("reason"):
                 lines.append(f"  原因：{a.get('reason')}")
+    # 持续提醒：之前提示过但还没执行/忽略的（买了自动停，没买一直催）
+    try:
+        from app.pending_reminders import format_pending_lines
+        plines = format_pending_lines(pending)
+    except Exception:
+        plines = []
+    if plines:
+        lines.append("")
+        lines.append("【仍未处理·持续提醒】回复「买了<名称>」停止提醒 / 「不买<名称>」忽略30天")
+        lines.extend(plines)
     if blocked:
         lines.append("【风控拦截】")
         for a in blocked[:8]:
@@ -685,6 +809,6 @@ def format_daily_push(sheet: dict[str, Any], ledger: dict[str, Any] | None = Non
     cap_show = int(float(acc.get("category_cap_pct") or 0.25) * 100)
     lines.append(
         f"纪律：每次{acc.get('shares_per_buy', 1)}份·同类≤{cap_show}%·"
-        f"总仓=1-A股全指10年分位·冷却30天/跌10%"
+        f"总仓=1−全A等权PE分位·冷却30天/跌10%"
     )
     return "\n".join(lines)

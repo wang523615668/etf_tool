@@ -9,8 +9,8 @@ from app.data_sources.lixinger import INDEX_CONFIG, fetch_index_series, build_va
 YEARS = 20
 
 def main() -> int:
-    force = True
-    print(f"[*] long history refresh years={YEARS} indices={len(INDEX_CONFIG)}", flush=True)
+    force = False   # 增量：从缓存末日-5天续拉(秒级)。旧代码 force=True 全量重拉20年×25指数≈60min，被 timeout 900 掐死 → 数据常年卡旧值(2026-10-01 修复)
+    print(f"[*] long history refresh years={YEARS} indices={len(INDEX_CONFIG)} (incremental)", flush=True)
     ok = fail = 0
     for name in INDEX_CONFIG:
         t0 = time.time()

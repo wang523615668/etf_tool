@@ -3,32 +3,46 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>ETF 拯救世界投资仪表盘</title>
+  <link rel="manifest" href="/static/manifest.json" />
+  <link rel="apple-touch-icon" href="/static/icon-192.png" />
+  <meta name="theme-color" content="#0a0e1f" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <title>ETF 投资仪表盘</title>
   <!-- local echarts: jsdelivr often hangs in CN and freezes page at 读取中… -->
-  <script src="/static/vendor/echarts.min.js?v=5.5.1"></script>
-  <link rel="stylesheet" href="/static/style.css?v=20260725a" />
+  <script src="/static/vendor/echarts.min.js?v=5.5.1-slim" defer></script>
+  <link rel="stylesheet" href="/static/style.css?v=20260822e" />
 </head>
 <body>
   <aside class="sidebar">
     <div class="brand">ETF 投资仪表盘</div>
-    <a href="#overview">首页总览</a>
-    <a href="#ledger">收益账本</a>
-    <a href="#actionSheet">今日动作单</a>
-    <a href="#valuation">估值温度计</a>
-    <a href="#sunburst">仓位旭日图</a>
-    <a href="#signals">买卖提醒</a>
-    <a href="#compare">E大对齐复盘</a>
-    <a href="#calibration">规则校准池</a>
-    <a href="#edTalks">E大发言归档</a>
-    <a href="#topics">主题知识库</a>
-    <a href="#rules">方法论规则</a>
-    <a href="/index-detail?t=20260723c" style="border-top:1px solid #2d3148;margin-top:8px;padding-top:8px;color:#f59e0b">📊 指数估值详情</a>
+    <div class="brand-sub">纪律 · 估值 · 自主决策</div>
+
+    <div class="nav-group">核心</div>
+    <a href="#overview"><span class="ico">🏠</span>首页总览</a>
+    <a href="#ledger"><span class="ico">💰</span>收益账本</a>
+    <a href="#actionSheet"><span class="ico">⚡</span>今日动作单</a>
+
+    <div class="nav-group">决策</div>
+    <a href="#valuation"><span class="ico">🌡️</span>估值温度计</a>
+    <a href="#batter"><span class="ico">🎯</span>击球分数</a>
+    <a href="#autonomy"><span class="ico">🤖</span>自主决策</a>
+    <a href="#signals2"><span class="ico">🔔</span>买卖提醒</a>
+    <a href="#marketPosition"><span class="ico">🎯</span>整体仓位</a>
+
+    <div class="nav-group">复盘</div>
+    <a href="#sunburst"><span class="ico">🧭</span>仓位旭日图</a>
+    <a href="#compare"><span class="ico">🔍</span>E大对齐复盘</a>
+    <a href="#calibration"><span class="ico">📐</span>规则校准池</a>
+    <a href="#edTalks"><span class="ico">📜</span>E大发言归档</a>
+    <a href="#topics"><span class="ico">📚</span>主题知识库</a>
+    <a href="/index-detail?t=20260723c" style="color:#f59e0b"><span class="ico">📊</span>指数估值详情</a>
   </aside>
   <main class="main">
     <section id="overview" class="hero">
       <div>
-        <h1>ETF 拯救世界 × 理杏仁 × 本地纪律系统</h1>
-        <p>目标：先跟踪 E大操作，逐步训练本地买卖提醒，最终在没有带领操作时仍能按纪律执行。</p>
+        <h1><em>ETF 拯救世界</em> × 理杏仁 × 本地纪律系统</h1>
+        <p>先跟踪 E大操作，逐步训练本地买卖提醒；E大不发车时，按估值温度 + 历史操作模式自主决策。</p>
       </div>
       <div class="hero-card">
         <div class="muted">最新同步</div>
@@ -38,6 +52,7 @@
 
     <section class="cards" id="summaryCards"></section>
     <section id="freshnessWarning" class="freshness-warning"></section>
+
     <section id="marketPosition" class="panel">
       <div class="panel-head">
         <div>
@@ -58,13 +73,13 @@
         <div id="ledgerMeta" class="topic-meta">—</div>
       </div>
       <div id="ledgerCards" class="decision-board"></div>
-      <div class="table-wrap" style="margin-top:12px">
+      <div class="table-wrap" style="margin-top:14px">
         <table>
           <thead><tr><th>标的</th><th>类别</th><th>份数</th><th>成本</th><th>市值</th><th>盈亏</th><th>收益率</th></tr></thead>
           <tbody id="ledgerTable"></tbody>
         </table>
       </div>
-      <div id="ledgerGroups" class="exposure-grid" style="margin-top:12px"></div>
+      <div id="ledgerGroups" class="exposure-grid" style="margin-top:14px"></div>
     </section>
 
     <section id="actionSheet" class="panel">
@@ -83,12 +98,44 @@
       <div class="panel-head">
         <div>
           <h2>指数估值温度计</h2>
-          <p>默认理杏仁 Open API 本地五年分位；失败时回退且慢。红利类按 PB 优先，过期数据自动暂停判断。</p>
+          <p>理杏仁（本地分位）与且慢（10年百分位，强周期PB）双数据源可切换。</p>
         </div>
-        <div id="valuationMeta" class="topic-meta">读取中…</div>
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <div class="source-switch" id="valuationSourceSwitch">
+            <button class="switch-btn active" data-source="lixinger">理杏仁</button>
+            <button class="switch-btn" data-source="qieman">且慢</button>
+          </div>
+          <div id="valuationMeta" class="topic-meta">读取中…</div>
+        </div>
       </div>
       <div id="decisionBoard" class="decision-board"></div>
       <div id="valuationList" class="valuation-grid"></div>
+    </section>
+
+    <section id="batter" class="panel">
+      <div class="panel-head">
+        <div>
+          <h2>🎯 击球分数</h2>
+          <p>估值 40% + 情绪 30% + 动量 30%。低估决定能不能买，恐慌决定敢不敢重买，动量决定什么时候真买。</p>
+        </div>
+        <div id="batterMeta" class="topic-meta">读取中…</div>
+      </div>
+      <div id="batterLegend" class="muted" style="margin-bottom:12px">
+        🚀主力买入 = 共振区(低估≥70+情绪降温) · 🌱左侧试探 = 同分动量未确认 · 📈右侧趋势 = 动量+均线确认吃主升浪 · 🌡️过热减仓 = 情绪>85且动量转负 · 🔴高估区只卖不买
+      </div>
+      <div id="batterList" class="valuation-grid"></div>
+      <div id="batterBacktest" class="topic-items" style="margin-top:16px"></div>
+    </section>
+
+    <section id="autonomy" class="panel">
+      <div class="panel-head">
+        <div>
+          <h2>自主决策引擎</h2>
+          <p>估值温度 + E大历史操作模式 + 我的持仓 → 买卖建议。E大不发车时自己决策。</p>
+        </div>
+        <div id="decisionMeta" class="topic-meta">读取中…</div>
+      </div>
+      <div id="decisionList" class="valuation-grid"></div>
     </section>
 
     <section id="exposure" class="panel">
@@ -111,37 +158,10 @@
       <div id="sunburstChart"></div>
     </section>
 
-    <section id="signals" class="panel">
+    <section id="recent" class="panel">
       <h2>最近发车</h2>
       <p>来自 ETF 投资分析网 Supabase 数据，150 份和 S 定投合并展示；点击卡片查看归档文章抽取的发车原因。</p>
       <div id="recentActions" class="action-grid"></div>
-    </section>
-
-    <div id="reasonModal" class="modal hidden">
-      <div class="modal-card">
-        <button id="reasonModalClose" class="modal-close">×</button>
-        <div id="reasonModalBody"></div>
-      </div>
-    </div>
-
-    <section class="panel" id="signals">
-      <div class="panel-head">
-        <div>
-          <h2>今日买卖提醒</h2>
-          <p>估值分位 + 持仓 + E大上下文。点「我已买入」后，默认 1 个月内不再给同向买入；或较买入点再跌 ≥10% 才恢复（时间或空间）。</p>
-        </div>
-        <div id="signalMeta" class="topic-meta">—</div>
-      </div>
-      <div id="signalList" class="signal-list"></div>
-      <div id="suppressedSignals" class="signal-list suppressed-list"></div>
-      <div class="panel-head" style="margin-top:14px">
-        <div>
-          <h3 style="margin:0">我的执行记录</h3>
-          <p style="margin:4px 0 0">记录真实成交，系统据此冷却重复信号。</p>
-        </div>
-        <div id="myTradeMeta" class="topic-meta">—</div>
-      </div>
-      <div id="myTradeList" class="topic-items"></div>
     </section>
 
     <section id="compare" class="panel">
@@ -155,11 +175,38 @@
       </div>
     </section>
 
+    <section id="signals2" class="panel">
+      <div class="panel-head">
+        <div>
+          <h2>今日买卖提醒</h2>
+          <p>估值分位 + 持仓 + E大上下文。点「我已买入」后，默认 1 个月内不再给同向买入；或较买入点再跌 ≥10% 才恢复（时间或空间）。</p>
+        </div>
+        <div id="signalMeta" class="topic-meta">—</div>
+      </div>
+      <div id="signalList" class="signal-list"></div>
+      <div id="suppressedSignals" class="signal-list suppressed-list"></div>
+      <div class="panel-head" style="margin-top:18px">
+        <div>
+          <h2 style="font-size:16px">我的执行记录</h2>
+          <p>记录真实成交，系统据此冷却重复信号。</p>
+        </div>
+        <div id="myTradeMeta" class="topic-meta">—</div>
+      </div>
+      <div id="myTradeList" class="topic-items"></div>
+    </section>
+
+    <div id="reasonModal" class="modal hidden">
+      <div class="modal-card">
+        <button id="reasonModalClose" class="modal-close">×</button>
+        <div id="reasonModalBody"></div>
+      </div>
+    </div>
+
     <section id="calibration" class="panel">
       <div class="panel-head">
         <div>
           <h2>规则校准池</h2>
-          <p>45 天窗口内本地提醒与 E大操作的匹配率；差异样本用于改进规则，不直接当“对错判决”。</p>
+          <p>45 天窗口内本地提醒与 E大操作的匹配率；差异样本用于改进规则，不直接当"对错判决"。</p>
         </div>
         <div id="calibrationMeta" class="topic-meta">读取中…</div>
       </div>
@@ -181,7 +228,7 @@
     <section id="topics" class="panel">
       <div class="panel-head">
         <div>
-          <h2>ETF拯救世界主题知识库</h2>
+          <h2>主题知识库</h2>
           <p>把 ChinaETFS / 且慢下载内容按主题多标签归类，作为买卖纪律和规则复盘依据。</p>
         </div>
         <div class="topic-meta" id="topicMeta">读取中…</div>
@@ -191,15 +238,17 @@
     </section>
 
     <section id="rules" class="panel">
-      <h2>后续规则引擎</h2>
+      <h2>方法论规则</h2>
       <div class="rule-grid">
-        <div><b>低估买入</b><span>PE/PB 分位低 + 仓位未满 → 分批买</span></div>
-        <div><b>高估减仓</b><span>分位高 + 已获利 + E大历史有类似卖出 → 减/停</span></div>
-        <div><b>网格策略</b><span>恒生科技、中概、证券、医药等高波动品种适用</span></div>
-        <div><b>对齐学习</b><span>每次和 E大差异都会沉淀为校准样本</span></div>
+        <div><b>🟢 低估买入</b><span>PE/PB 分位低 + 仓位未满 → 分批买</span></div>
+        <div><b>🔴 高估减仓</b><span>分位高 + 已获利 + E大历史有类似卖出 → 减/停</span></div>
+        <div><b>📈 网格策略</b><span>恒生科技、中概、证券、医药等高波动品种适用</span></div>
+        <div><b>🔄 对齐学习</b><span>每次和 E大差异都会沉淀为校准样本</span></div>
       </div>
     </section>
+
+    <div class="sync-strip">数据仅供个人投资纪律参考 · 理杏仁 / 且慢 / E大发车信号 · 本地部署</div>
   </main>
-  <script src="/static/app.js?v=20260723e"></script>
+  <script src="/static/app.js?v=20260822e" defer></script>
 </body>
 </html>

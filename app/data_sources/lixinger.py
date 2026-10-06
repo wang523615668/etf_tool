@@ -35,11 +35,12 @@ TOKEN_STATE_PATH = _REPO_ROOT / "data" / "lixinger_token_state.json"
 
 # dashboard name -> (area, stockCode, pe_metric, pb_metric)
 INDEX_CONFIG: dict[str, dict[str, str]] = {
-    "沪深300": {"area": "cn", "code": "000300", "pe": "pe_ttm.ewpvo", "pb": "pb.ewpvo"},
-    "中证500": {"area": "cn", "code": "000905", "pe": "pe_ttm.ewpvo", "pb": "pb.ewpvo"},
-    "上证50": {"area": "cn", "code": "000016", "pe": "pe_ttm.ewpvo", "pb": "pb.ewpvo"},
-    "创业板指": {"area": "cn", "code": "399006", "pe": "pe_ttm.ewpvo", "pb": "pb.ewpvo"},
-    "科创50": {"area": "cn", "code": "000688", "pe": "pe_ttm.ewpvo", "pb": "pb.ewpvo"},
+    "沪深300": {"area": "cn", "code": "000300", "pe": "pe_ttm.mcw", "pb": "pb.mcw"},
+    # 中证A500(000510) 理杏仁免费层无权限(403 Exceed maximum access time)，走且慢日更缓存监控，勿加回
+    "中证500": {"area": "cn", "code": "000905", "pe": "pe_ttm.mcw", "pb": "pb.mcw"},
+    "上证50": {"area": "cn", "code": "000016", "pe": "pe_ttm.mcw", "pb": "pb.mcw"},
+    "创业板指": {"area": "cn", "code": "399006", "pe": "pe_ttm.mcw", "pb": "pb.mcw"},
+    "科创50": {"area": "cn", "code": "000688", "pe": "pe_ttm.mcw", "pb": "pb.mcw"},
     "中证红利": {"area": "cn", "code": "000922", "pe": "pe_ttm.ewpvo", "pb": "pb.ewpvo"},
     "红利低波": {"area": "cn", "code": "H30269", "pe": "pe_ttm.ewpvo", "pb": "pb.ewpvo"},
     "红利低波100": {"area": "cn", "code": "930955", "pe": "pe_ttm.ewpvo", "pb": "pb.ewpvo"},
@@ -54,23 +55,28 @@ INDEX_CONFIG: dict[str, dict[str, str]] = {
     "全指金融": {"area": "cn", "code": "000992", "pe": "pe_ttm.ewpvo", "pb": "pb.ewpvo"},
     "全指信息": {"area": "cn", "code": "000993", "pe": "pe_ttm.ewpvo", "pb": "pb.ewpvo"},
     "养老产业": {"area": "cn", "code": "399812", "pe": "pe_ttm.ewpvo", "pb": "pb.ewpvo"},
-    "A股全指": {"area": "cn", "code": "000985", "pe": "pe_ttm.ewpvo", "pb": "pb.ewpvo"},
+    "A股全指": {"area": "cn", "code": "000985", "pe": "pe_ttm.mcw", "pb": "pb.mcw"},
     "中概互联": {"area": "cn", "code": "H11136", "pe": "pe_ttm.ewpvo", "pb": "pb.ewpvo"},
     "恒生指数": {"area": "hk", "code": "HSI", "pe": "pe_ttm.mcw", "pb": "pb.mcw"},
-    "恒生科技": {"area": "hk", "code": "HSTECH", "pe": "pe_ttm.mcw", "pb": "pb.mcw"},
+    "恒生国企": {"area": "hk", "code": "HSCEI", "pe": "pe_ttm.mcw", "pb": "pb.mcw"},
+    "香港医疗": {"area": "hk", "code": "HSHCI", "pe": "pe_ttm.mcw", "pb": "pb.mcw"},
 }
 
 # 红利类 PE 失真，温度只用 PB
 PB_ONLY_INDICES = {"中证红利", "红利低波", "红利低波100", "中证银行"}
+# 且慢口径：强周期行业（券商/金融/环保）PE 失真，改用 PB（与且慢 8 年口径一致）
+QIEMAN_PB_ONLY = PB_ONLY_INDICES | {"证券公司", "全指金融", "中证环保"}
 # 本地序列尽量拉 20 年；指数成立不足 20 年时以实际可取最长历史为准。
 # 分位默认仍用近 5 年（首页温度计），详情页按 UI 窗口切。
 HISTORY_YEARS = 20
 PERCENTILE_YEARS = 5
+QIEMAN_PERCENTILE_YEARS = 8  # 且慢口径：估值百分位用近 8 年
 REQUEST_GAP = 0.35
 # 理杏仁对超长区间可能 403，分块拉取
 FETCH_CHUNK_DAYS = 730
 # series files can be reused across many page views; network refresh is daily/cron only
 SERIES_TTL = 24 * 3600
+STALE_DAYS = 21  # 理杏仁免费层数据实际滞后~15天；21天内视为新鲜（避免全量pause）
 # homepage must NOT re-hit 理杏仁 every open — serve snapshot forever until forced refresh
 SNAPSHOT_TTL = 7 * 24 * 3600
 # hard stop: web paths pass allow_network=False
@@ -235,6 +241,15 @@ def _series_path(code: str) -> Path:
     return CACHE_DIR / f"{code}.json"
 
 
+def _cache_metric_mismatch(payload: dict, pe_key: str, pb_key: str) -> bool:
+    """缓存文件记录过 metrics；与当前配置不一致时视为过期（口径已变，如 ewpvo→mcw）"""
+    cached_metrics = payload.get("metrics") or []
+    if not cached_metrics:
+        return False  # 旧缓存无 metrics 记录，兼容处理（默认信任）
+    wanted = {pe_key, pb_key}
+    return not wanted.issubset(set(cached_metrics))
+
+
 def _normalize_date(value: Any) -> str | None:
     if value is None:
         return None
@@ -253,6 +268,33 @@ def _percentile(values: list[float], current: float | None) -> float | None:
 
 
 
+_ROW_DATES_CACHE: dict[tuple, list] = {}
+_MAX_CACHE = 32
+
+
+def _cached_row_dates(rows: list[dict[str, Any]]) -> list[date]:
+    """按 rows 内容指纹缓存解析好的日期数组（避免重复 strptime）。"""
+    if not rows:
+        return []
+    n = len(rows)
+    first = str(rows[0].get("date") or "")[:10]
+    last = str(rows[-1].get("date") or "")[:10]
+    key = (n, first, last)
+    hit = _ROW_DATES_CACHE.get(key)
+    if hit is not None and len(hit) == n:
+        return hit
+    if len(_ROW_DATES_CACHE) >= _MAX_CACHE:
+        _ROW_DATES_CACHE.clear()
+    dates: list[date] = []
+    for r in rows:
+        try:
+            dates.append(datetime.strptime(str(r.get("date") or "")[:10], "%Y-%m-%d").date())
+        except Exception:
+            dates.append(date.min)
+    _ROW_DATES_CACHE[key] = dates
+    return dates
+
+
 def _rolling_mean_series(
     rows: list[dict[str, Any]],
     field: str,
@@ -260,17 +302,16 @@ def _rolling_mean_series(
     window_days: int = 365 * 5,
     min_points: int = 200,
 ) -> list[float | None]:
-    """Trailing calendar-window mean for field; None until min_points filled."""
+    """Trailing calendar-window mean for field; None until min_points filled.
+
+    优化：日期用预解析缓存（避免每次 strptime 5.8万次）。
+    """
     n = len(rows)
     means: list[float | None] = [None] * n
     if n == 0:
         return means
-    dates: list[date] = []
-    for r in rows:
-        try:
-            dates.append(datetime.strptime(str(r.get("date") or "")[:10], "%Y-%m-%d").date())
-        except Exception:
-            dates.append(date.min)
+    # 预解析日期一次（模块级缓存按 rows id）
+    dates = _cached_row_dates(rows)
     s = 0.0
     cnt = 0
     j = 0
@@ -481,9 +522,15 @@ def _valuation_action(
         return "buy", "分位处于深度低估区"
     if score <= 0.30:
         return "buy", "分位处于低估区"
+    # 卖出阈值回测校准（backtest_sell_percentile.py，106笔卖出）：
+    # 他≥88%才卖的只有5%笔；中位卖出席位57%；2026年密集卖出在67-74%。
+    # 原话："到了持有阶段…不到真正高估的时候，尽量不要卖出实质性的仓位"+"换仓优先，不净卖出"
+    # → 70%起"逐步卖出1份"，88%起"减2份"（激进档）
     if score >= 0.88:
-        return "reduce", "分位处于高估区"
-    if score >= 0.68:
+        return "reduce", "分位极高估(≥88%)，激进档减2份"
+    if score >= 0.70:
+        return "reduce", "分位回到偏高区(≥70%)，E大实际卖出席位带，逐步卖出1份/次"
+    if score >= 0.60:
         return "hold", "估值偏高，控制加仓"
     return "watch", "估值中性，等待更好赔率"
 
@@ -585,6 +632,10 @@ def fetch_index_series(
             payload = json.loads(path.read_text(encoding="utf-8"))
             cached_rows = list(payload.get("rows") or [])
             fetched_ts = float(payload.get("fetched_ts") or 0)
+            if _cache_metric_mismatch(payload, pe_key, pb_key):
+                # 口径变了（如 ewpvo→mcw），旧缓存作废
+                cached_rows = []
+                fetched_ts = 0.0
         except Exception:
             cached_rows = []
             fetched_ts = 0.0
@@ -597,7 +648,7 @@ def fetch_index_series(
     if cached_rows and not force:
         max_date = max((_normalize_date(r.get("date")) or "" for r in cached_rows), default="")
         fresh_enough = bool(fetched_ts) and time.time() - fetched_ts < SERIES_TTL and max_date >= (
-            today - timedelta(days=3)
+            today - timedelta(days=STALE_DAYS)
         ).isoformat()
         if not allow_network or fresh_enough:
             return sorted(cached_rows, key=lambda r: r.get("date") or "")
@@ -759,6 +810,7 @@ def fetch_index_series(
                 "name": name,
                 "code": code,
                 "area": area,
+                "metrics": [pe_key, pb_key],
                 "fetched_ts": time.time(),
                 "fetched_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "rows": rows,
@@ -770,7 +822,28 @@ def fetch_index_series(
     return rows
 
 
+_INDEX_DETAIL_CACHE: dict[tuple, tuple[float, dict[str, Any]]] = {}
+_INDEX_DETAIL_TTL = 300.0  # 详情/总仓计算缓存 5 分钟（本地缓存日频，安全）
+
+
 def get_index_detail(
+    name: str,
+    window_years: float = 20.0,
+    allow_network: bool = False,
+) -> dict[str, Any]:
+    # 进程内 TTL 缓存：market_position_guide/ledger/详情页每请求重算 6 条滚动均值很贵
+    # （实测 api_summary 单次 2.9s，其中 get_index_detail 占 2.1s）
+    key = (name, float(window_years), bool(allow_network))
+    now = time.time()
+    hit = _INDEX_DETAIL_CACHE.get(key)
+    if hit and now - hit[0] < _INDEX_DETAIL_TTL:
+        return hit[1]
+    result = _get_index_detail_impl(name, window_years, allow_network)
+    _INDEX_DETAIL_CACHE[key] = (now, result)
+    return result
+
+
+def _get_index_detail_impl(
     name: str,
     window_years: float = 20.0,
     allow_network: bool = False,
@@ -983,10 +1056,15 @@ def _enrich_snapshot_mean_dev(snap: dict[str, Any]) -> dict[str, Any]:
 
 
 
+def _snapshot_cache_path(qieman_mode: bool = False) -> Path:
+    return (SNAPSHOT_CACHE.parent / "lixinger_valuations_qieman.json") if qieman_mode else SNAPSHOT_CACHE
+
+
 def build_valuation_snapshot(
     names: list[str] | None = None,
     force: bool = False,
     allow_network: bool | None = None,
+    qieman_mode: bool = False,
 ) -> dict[str, Any]:
     if allow_network is None:
         allow_network = True if force else DEFAULT_ALLOW_NETWORK
@@ -994,9 +1072,10 @@ def build_valuation_snapshot(
         allow_network = True
 
     # Always prefer snapshot file for web: no network rebuild on page open
-    if not force and SNAPSHOT_CACHE.exists():
+    snap_cache = _snapshot_cache_path(qieman_mode)
+    if not force and snap_cache.exists():
         try:
-            cached = json.loads(SNAPSHOT_CACHE.read_text(encoding="utf-8"))
+            cached = json.loads(snap_cache.read_text(encoding="utf-8"))
             snap = cached.get("snapshot") or {}
             if snap.get("rows"):
                 age = time.time() - float(cached.get("fetched_ts") or 0)
@@ -1015,9 +1094,9 @@ def build_valuation_snapshot(
 
     if not allow_network:
         # last-resort empty/stale cache already handled; try one more read
-        if SNAPSHOT_CACHE.exists():
+        if snap_cache.exists():
             try:
-                cached = json.loads(SNAPSHOT_CACHE.read_text(encoding="utf-8"))
+                cached = json.loads(snap_cache.read_text(encoding="utf-8"))
                 snap = cached.get("snapshot") or {}
                 if snap.get("rows"):
                     snap = dict(snap)
@@ -1045,12 +1124,13 @@ def build_valuation_snapshot(
     errors: list[str] = []
     for name in targets:
         try:
-            series = fetch_index_series(name, force=force, allow_network=True)
+            series = fetch_index_series(name, force=force, allow_network=allow_network)
             if not series:
                 errors.append(f"{name}: empty")
                 continue
-            # 分位用近 PERCENTILE_YEARS（默认5年）；序列本身可更长
-            cutoff = (date.today() - timedelta(days=int(PERCENTILE_YEARS * 365.25))).isoformat()
+            # 分位窗口：默认 PERCENTILE_YEARS（5年）；且慢模式用 8 年口径
+            pct_years = QIEMAN_PERCENTILE_YEARS if qieman_mode else PERCENTILE_YEARS
+            cutoff = (date.today() - timedelta(days=int(pct_years * 365.25))).isoformat()
             window = [r for r in series if (r.get("date") or "") >= cutoff] or series
             latest = window[-1]
             pe = latest.get("pe")
@@ -1059,7 +1139,9 @@ def build_valuation_snapshot(
             pb_hist = [float(r["pb"]) for r in window if r.get("pb") is not None]
             pe_pct = _percentile(pe_hist, float(pe) if pe is not None else None)
             pb_pct = _percentile(pb_hist, float(pb) if pb is not None else None)
-            pb_only = name in PB_ONLY_INDICES
+            # 且慢口径：强周期行业（券商/金融/环保）用 PB 估值
+            pb_only_set = QIEMAN_PB_ONLY if qieman_mode else PB_ONLY_INDICES
+            pb_only = name in pb_only_set
             pe_pct_use = None if pb_only else pe_pct
             snap_date = latest.get("date")
             if snap_date:
@@ -1067,8 +1149,10 @@ def build_valuation_snapshot(
             stale = False
             if snap_date:
                 try:
+                    # 理杏仁免费层 CN 数据实际滞后可达数周；用 STALE_DAYS 而非硬编码 3 天，
+                    # 避免上游滞后导致全量"数据过期暂停"
                     stale = datetime.strptime(snap_date, "%Y-%m-%d").date() < (
-                        date.today() - timedelta(days=3)
+                        date.today() - timedelta(days=STALE_DAYS)
                     )
                 except Exception:
                     stale = False
@@ -1208,8 +1292,8 @@ def build_valuation_snapshot(
     warning = None
     if not rows:
         warning = "理杏仁估值为空: " + ("; ".join(errors[:3]) if errors else "无数据")
-    elif max_date and max_date < (date.today() - timedelta(days=3)).isoformat():
-        warning = f"理杏仁最新数据日 {max_date} 超过3天，仅供参考"
+    elif max_date and max_date < (date.today() - timedelta(days=STALE_DAYS)).isoformat():
+        warning = f"理杏仁最新数据日 {max_date} 超过{STALE_DAYS}天，仅供参考"
 
     freshness = {
         "snapshot_date": max_date,
@@ -1225,7 +1309,10 @@ def build_valuation_snapshot(
         "warning": warning,
         "source": "lixinger",
         "served_from": "live_refresh",
-        "note": "估值来自理杏仁 Open API，本地计算五年分位；红利类按 PB-only。网页默认只读缓存。",
+        "note": ("估值来自理杏仁 Open API，本地计算且慢口径8年分位；强周期行业按 PB-only。"
+                 if qieman_mode
+                 else "估值来自理杏仁 Open API，本地计算五年分位；红利类按 PB-only。网页默认只读缓存。"),
+        "percentile_mode": "qieman_8y" if qieman_mode else "default_5y",
         "errors": errors[:8],
     }
     groups = {k: [] for k in ("buy", "watch", "hold", "reduce", "pause")}
@@ -1247,8 +1334,8 @@ def build_valuation_snapshot(
         "fetched_at": freshness["snapshot_mtime"],
         "cache_only": False,
     }
-    SNAPSHOT_CACHE.parent.mkdir(parents=True, exist_ok=True)
-    SNAPSHOT_CACHE.write_text(
+    snap_cache.parent.mkdir(parents=True, exist_ok=True)
+    snap_cache.write_text(
         json.dumps(
             {"fetched_ts": time.time(), "snapshot": snapshot},
             ensure_ascii=False,

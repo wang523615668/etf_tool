@@ -202,17 +202,11 @@
       <p class="hint" id="chartHint">绿B=买入，红S=卖出；同一天多笔会合并成一个点。</p>
       <div id="overlayChart" class="chart-box"></div>
     </section>
-    <section class="chart-panel">
-      <h3>点位（单独）</h3>
-      <div id="cpChart" class="chart-box small"></div>
-    </section>
-    <section class="chart-panel">
-      <h3>PE 历史（单独）</h3>
-      <div id="peChart" class="chart-box small"></div>
-    </section>
-    <section class="chart-panel">
-      <h3>PB 历史（单独）</h3>
-      <div id="pbChart" class="chart-box small"></div>
+
+    <section class="chart-panel" id="selfCalcPanel" style="display:none">
+      <h3>自算估值（独立引擎 · 剔亏损·成分中位） <span class="meta" id="selfCalcMeta" style="font-size:12px;color:#8fa0c5"></span></h3>
+      <p class="hint">全A快照(东财PE-TTM/PB-MRQ)×成分股·剔亏损·取中位数；与理杏仁/且慢独立，用于交叉验证。分位窗口2018起。</p>
+      <div id="selfCalcBody" class="metric-row"></div>
     </section>
 
     <div class="knowledge-grid">
@@ -264,9 +258,6 @@
     }
     const charts = {
       overlay: makeChart(document.getElementById('overlayChart')),
-      pe: makeChart(document.getElementById('peChart')),
-      pb: makeChart(document.getElementById('pbChart')),
-      cp: makeChart(document.getElementById('cpChart')),
     };
 
     function lineOption(title, dates, values, color, markPoints, extras) {
@@ -534,15 +525,7 @@
         return;
       }
       const rows = detail.rows || [];
-      const dates = rows.map(r => r.date);
-      const cpMarks = buildCpMarkPoints(detail);
       if (charts.overlay) charts.overlay.setOption(overlayOption(detail), true);
-      if (charts.cp) charts.cp.setOption(lineOption('点位', dates, rows.map(r => r.cp), '#ffd166', cpMarks, {
-        ma850: { data: rows.map(r => r.cp_ma850), color: '#ff6b6b', name: 'MA850' },
-        ma250: { data: rows.map(r => r.cp_ma250), color: '#f59e0b', name: 'MA250' },
-      }), true);
-      if (charts.pe) charts.pe.setOption(lineOption('PE', dates, rows.map(r => r.pe), '#69d2ff'), true);
-      if (charts.pb) charts.pb.setOption(lineOption('PB', dates, rows.map(r => r.pb), '#18c37e'), true);
     }
 
     function renderArticles(detail) {
@@ -617,6 +600,51 @@
       }).join('');
     }
 
+    async function renderSelfCalc(detail, name) {
+      const panel = document.getElementById('selfCalcPanel');
+      const body = document.getElementById('selfCalcBody');
+      const meta = document.getElementById('selfCalcMeta');
+      panel.style.display = 'none';
+      try {
+        const list = await getJSON('/api/self-daily');
+        // 匹配: code 或 name
+        const cfgCode = (detail.code || (detail.name === name ? '' : ''));
+        let hit = (list.items || []).find(x => x.name === name || x.code === (detail.code || '').replace(/\D/g,'') || x.code === detail.code);
+        if (!hit && detail.code) hit = (list.items || []).find(x => x.code === detail.code);
+        if (!hit) return;
+        const self = hit;
+        const ext = await getJSON(`/api/self-daily/${encodeURIComponent(self.code)}`);
+        const rows = (ext.rows || []).filter(r => r && r.pe != null);
+        panel.style.display = '';
+        const latest = self.latest || {};
+        // 与理杏仁同日对比：在自算rows里找理杏仁latest.date那天的值
+        const lixPe = detail.latest && (detail.latest.pe != null) ? Number(detail.latest.pe) : null;
+        const lixDate = detail.latest && detail.latest.date ? String(detail.latest.date).slice(0,10) : null;
+        const sameDay = lixDate ? rows.find(r => r.date === lixDate) : null;
+        const dev = (lixPe != null && sameDay && sameDay.pe) ? (sameDay.pe / lixPe - 1) * 100 : null;
+        const pctBadge = (v) => v == null ? '—' :
+          `<span style="color:${v<=10?'#18c37e':v>=80?'#ff6b6b':'#e8b45a'}">${v.toFixed(1)}%</span>`;
+        // sparkline
+        const tail = rows.slice(-500);
+        let spark = '';
+        if (tail.length > 30) {
+          const vals = tail.map(r => r.pe);
+          const lo = Math.min(...vals), hi = Math.max(...vals);
+          const pts = vals.map((v,i) => `${(i/(vals.length-1)*100).toFixed(1)},${(30 - (hi===lo?15:(v-lo)/(hi-lo)*28)).toFixed(1)}`).join(' ');
+          spark = `<svg viewBox="0 0 100 32" style="width:100%;height:44px;margin-top:6px"><polyline points="${pts}" fill="none" stroke="#5aa2ff" stroke-width="0.8"/></svg>`;
+        }
+        body.innerHTML = `
+          <div class="metric-card"><div class="label">自算PE(剔亏中位)</div><strong>${latest.pe != null ? Number(latest.pe).toFixed(2) : '—'}</strong><div class="label">${esc(latest.date || '')}</div></div>
+          <div class="metric-card"><div class="label">自算PB</div><strong>${latest.pb != null ? Number(latest.pb).toFixed(2) : '—'}</strong></div>
+          <div class="metric-card"><div class="label">5年分位(自算)</div><strong>${pctBadge(self.p5y)}</strong></div>
+          <div class="metric-card"><div class="label">10年分位(自算)</div><strong>${pctBadge(self.p10y)}</strong></div>
+          <div class="metric-card"><div class="label">与理杏仁偏差</div><strong>${dev == null ? '—(日不同)' : (dev>=0?'+':'') + dev.toFixed(1) + '%'}</strong><div class="label">${dev == null ? '' : Math.abs(dev) > 15 ? '口径差·勿直接比分位' : '水平接近'}</div></div>
+          <div class="metric-card" style="flex:1 1 100%"><div class="label">自算PE走势(近500日)</div>${spark}</div>
+          ${self.method ? `<div class="metric-card" style="flex:1 1 100%"><div class="label">口径</div><div class="label" style="font-size:12px;line-height:1.7;text-align:left">${esc(self.method)}${self.pit ? '<br>· 成分按月份 as-of 变动, 历史分位已按当时名单重算; 与旧"冻结名单"版分位不可直接比较(如中证500 5年分位由 26.5% 修正为 73.5%)<br>· 名单源 baostock 批次最多滞后约4个月, 宽基序列残留约 ±4% 系统偏差' : '<br>· 行业/策略指数暂无免费 as-of 名单, 成分按当前名单固定, 存在名单漂移(与E大表对数字偏差 6~32%)<br>· 本序列分位仅作自身历史纵向比较, 不要与E大表或第三方同日数值横比'}</div></div>` : ''}`;
+        meta.textContent = `${self.days}个交易日 · 成分${(latest.n||'')}只 · ${self.pit ? 'PIT' : '当前成分'}`;
+      } catch (e) { /* 静默 */ }
+    }
+
     async function loadList() {
       const data = await getJSON('/api/index-list');
       const select = document.getElementById('indexSelect');
@@ -644,6 +672,7 @@
         renderCharts(detail);
         renderArticles(detail);
         renderActions(detail);
+        renderSelfCalc(detail, name);
       } catch (err) {
         box.className = 'freshness-warning show';
         box.textContent = '加载失败：' + (err.message || err);

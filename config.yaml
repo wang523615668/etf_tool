@@ -1,7 +1,7 @@
 # ETF投资仪表盘配置文件
 paths:
   jztz_base: "/vol1/1000/openzl/jztz"
-  topic_index: "/vol1/  # 自动根据BASE解析，优先BASE/data/topic_index.json
+  topic_index: "data/topic_index.json"  # 相对BASE解析
   cache_dir: "cache"
   data_dir: "data"
 

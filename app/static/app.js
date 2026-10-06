@@ -1,7 +1,18 @@
+// summary 请求去重：页面初始化/记录成交/删除成交可能并发请求 /api/summary，
+// 共享同一个 in-flight Promise，避免重复拉 150KB 大响应。
+let _summaryInflight = null;
 async function getJSON(url) {
-  const response = await fetch(url);
-  if (!response.ok) throw new Error(url);
-  return response.json();
+  if (url === '/api/summary' && _summaryInflight) return _summaryInflight;
+  const p = (async () => {
+    const response = await fetch(url);
+    if (!response.ok) throw new Error(url);
+    return response.json();
+  })();
+  if (url === '/api/summary') {
+    _summaryInflight = p;
+    p.finally(() => { if (_summaryInflight === p) _summaryInflight = null; });
+  }
+  return p;
 }
 
 const actionText = { buy: '买入', sell: '卖出', hold: '持有', watch: '观察', reduce: '减仓', pause: '暂停' };
@@ -167,20 +178,56 @@ function renderActionSheet(sheet) {
       ? ` · 目标总仓${(sheet.market_position.target_position_pct*100).toFixed(1)}%`
       : '');
   const actionable = actions.filter(a => a.status === 'actionable' || a.status === 'watch');
-  if (!actionable.length) {
+  const pending = sheet.pending_reminders || [];
+  if (!actionable.length && !pending.length) {
     list.innerHTML = '<div class="empty-hint">今日无新增可执行动作（可能都在冷却/已满仓）</div>';
   } else {
-    list.innerHTML = actionable.map((a, index) => `
+    list.innerHTML = (pending.length ? `<div class="cooldown-title">持续提醒（已操作自动停 / 未操作一直催）</div>` : '') + actionable.map((a, index) => `
       <div class="signal ${a.action || 'watch'}">
         <div class="action">${htmlEscape(a.date || '')} · ${actionText[a.action] || a.action || '观察'} · 建议 ${a.suggested_shares ?? 0} 份</div>
         <div class="name">${htmlEscape(a.name || '')} <span class="muted">${htmlEscape(a.group || a.category || '')}</span></div>
         <div class="reason">${htmlEscape(a.checklist || a.reason || '')}</div>
-        ${a.action === 'buy' && (a.suggested_shares||0) > 0 ? `<div class="signal-actions"><button class="btn-mini btn-buy-done" data-as-idx="${index}">我已买入 ${a.suggested_shares} 份</button></div>` : ''}
-      </div>`).join('');
+        ${(a.status === 'actionable') ? `<div class="signal-actions">
+          <button class="btn-mini btn-buy-done" data-as-idx="${index}">✅ 已操作</button>
+          <button class="btn-mini btn-dismiss" data-as-idx="${index}" style="opacity:.75">⏸ 暂不操作(忽略30天)</button>
+        </div>` : ''}
+      </div>`).join('')
+      + pending.map(r => {
+          const n = Number(r.count || 1);
+          const since = r.first_date ? `自${r.first_date}` : '';
+          return `<div class="signal cooldown">
+            <div class="action">仍未处理 · ${r.action === 'buy' ? '买入' : '卖出/减仓'} · 已提醒${n > 1 ? ` ${n} 次` : ''}${since}</div>
+            <div class="name">${htmlEscape(r.name || '')}</div>
+            <div class="signal-actions">
+              <button class="btn-mini btn-pending-done" data-pr-key="${htmlEscape(r.key)}" data-pr-name="${htmlEscape(r.name || '')}" data-pr-action="${r.action}">✅ 已操作，停止提醒</button>
+              <button class="btn-mini btn-pending-dismiss" data-pr-key="${htmlEscape(r.key)}" data-pr-name="${htmlEscape(r.name || '')}" style="opacity:.75">⏸ 不操作(忽略30天)</button>
+            </div>
+          </div>`;
+        }).join('');
+    // 今日信号：已操作 → 记成交（走原逻辑，含冷却压制）
     list.querySelectorAll('.btn-buy-done').forEach(btn => {
       btn.addEventListener('click', async () => {
         const a = actionable[Number(btn.dataset.asIdx)];
-        await recordMyTrade({ ...a, action: 'buy', shares: a.suggested_shares || 1 }, btn);
+        await recordMyTrade({ ...a, action: a.action || 'buy', shares: a.suggested_shares || 1 }, btn);
+      });
+    });
+    // 今日信号：不操作 → 忽略30天
+    list.querySelectorAll('.btn-dismiss').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const a = actionable[Number(btn.dataset.asIdx)];
+        await dismissSignal({ name: a.name, code: a.code }, btn, '已忽略，30天内不再提醒');
+      });
+    });
+    // 历史未决：已操作
+    list.querySelectorAll('.btn-pending-done').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        await confirmPendingBought(btn.dataset.prName, btn.dataset.prAction, btn);
+      });
+    });
+    // 历史未决：不操作
+    list.querySelectorAll('.btn-pending-dismiss').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        await dismissSignal({ name: btn.dataset.prName }, btn, '已忽略，30天内不再提醒');
       });
     });
   }
@@ -283,6 +330,52 @@ function renderSignals(signals, suppressed = [], decisionMemory = null) {
         </div>`).join('');
     }
   }
+}
+
+async function confirmPendingBought(name, action, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = '记录中…'; }
+  try {
+    const res = await fetch('/api/pending-reminders/bought', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name, action: action === 'buy' ? 'buy' : 'sell' }),
+    });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || 'failed');
+    if (btn) btn.textContent = '已记录';
+    await refreshAfterAction();
+  } catch (err) {
+    if (btn) { btn.disabled = false; btn.textContent = '重试'; }
+    alert('记录失败：' + (err.message || err));
+  }
+}
+
+async function dismissSignal(sig, btn, okText) {
+  if (btn) { btn.disabled = true; btn.textContent = '处理中…'; }
+  try {
+    const res = await fetch('/api/pending-reminders/dismiss', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: sig.name }),
+    });
+    const data = await res.json();
+    if (!data.ok) throw new Error('未找到对应提醒');
+    if (btn) btn.textContent = okText || '已忽略';
+    await refreshAfterAction();
+  } catch (err) {
+    if (btn) { btn.disabled = false; btn.textContent = '重试'; }
+    alert('操作失败：' + (err.message || err));
+  }
+}
+
+async function refreshAfterAction() {
+  const summary = await getJSON('/api/summary');
+  renderCards(summary);
+  renderSignals(summary.signals || [], summary.suppressed_signals || [], summary.decision_memory || null);
+  renderLedger(summary.ledger);
+  renderMarketPosition(summary.market_position || summary.ledger?.market_position);
+  renderActionSheet(summary.action_sheet);
+  renderMyTrades();
 }
 
 async function recordMyTrade(signal, btn) {
@@ -388,6 +481,31 @@ function detailHref(name) {
   return `/index-detail#${encodeURIComponent(name || '')}`;
 }
 
+function renderDecision(dash) {
+  const target = document.getElementById('decisionList');
+  const meta = document.getElementById('decisionMeta');
+  if (!target) return;
+  const rows = dash.rows || [];
+  if (meta) meta.textContent = `${dash.total || rows.length} 个品种 · ${dash.generated_at || ''}`;
+  const order = { '买入': 0, '可买入': 1, '持有': 2, '观望': 3, '减仓': 4, '卖出': 5, '暂停': 6 };
+  const sorted = [...rows].sort((a, b) => (order[a.decision] ?? 9) - (order[b.decision] ?? 9) || (a.temperature ?? 999) - (b.temperature ?? 999));
+  target.innerHTML = sorted.slice(0, 18).map(row => {
+    const conf = row.confidence === '高' ? '🔥' : row.confidence === '中' ? '⚡' : '';
+    const cls = (row.decision === '买入' || row.decision === '可买入') ? 'buy' : (row.decision === '卖出' || row.decision === '减仓') ? 'reduce' : (row.decision === '持有') ? 'hold' : '';
+    return `
+    <a class="valuation-card ${cls}" href="${detailHref(row.name)}" style="text-decoration:none;color:inherit;display:block">
+      <div class="valuation-head"><b>${htmlEscape(row.name)}</b><span class="tag ${cls}">${row.decision} ${conf}</span></div>
+      <div class="temperature"><strong>${row.temperature ?? '-'}</strong><span>估值温度</span></div>
+      <div class="valuation-metrics">
+        <span>E大信号 ${row.ed_signals ?? 0}</span><span>买${row.ed_buys ?? 0}/卖${row.ed_sells ?? 0}</span>
+        <span>${row.my_bought ? '✅ 已持有' : '未持有'}</span><span>置信 ${row.confidence}</span>
+      </div>
+      <div class="reason">${htmlEscape(row.decision_basis || '')}</div>
+      <div class="muted" style="margin-top:8px">${htmlEscape(row.ed_hint || '')}</div>
+    </a>`;
+  }).join('');
+}
+
 function renderValuations(dashboard) {
   const target = document.getElementById('valuationList');
   const board = document.getElementById('decisionBoard');
@@ -395,7 +513,11 @@ function renderValuations(dashboard) {
   if (!target) return;
   const rows = Array.isArray(dashboard) ? dashboard : (dashboard.rows || []);
   const counts = dashboard.counts || {};
-  if (meta) meta.textContent = `${dashboard.total || rows.length} 个指数 · 低估 ${counts.buy || 0} · 高估 ${counts.reduce || 0} · ${counts.pause ? `过期 ${counts.pause}` : '数据正常'}`;
+  const isQieman = (dashboard.data_source === 'qieman') || (rows[0] && rows[0].source === 'qieman');
+  if (meta) {
+    const modeNote = isQieman ? ' · 且慢10年百分位' : ' · 本地分位';
+    meta.textContent = `${dashboard.total || rows.length} 个指数${modeNote} · 低估 ${counts.buy || 0} · 高估 ${counts.reduce || 0} · ${counts.pause ? `过期 ${counts.pause}` : '数据正常'}`;
+  }
   if (board) {
     const top = dashboard.top || {};
     const blocks = [
@@ -424,6 +546,27 @@ function renderValuations(dashboard) {
     const interest = row.mean_dev_interest_score != null
       ? `兴趣${row.mean_dev_interest_score}·${htmlEscape(row.mean_dev_interest_level || '')}`
       : '';
+    // 且慢字段：value=PE或PB值, percentile=百分位(0-100), high_10y/low_10y/roe
+    if (isQieman) {
+      const metric = row.metric || 'PE';
+      const val = row.value != null ? num(row.value) : '—';
+      const pctStr = row.percentile != null ? row.percentile.toFixed(1) + '%' : '—';
+      const high = row.high_10y != null ? num(row.high_10y) : '—';
+      const low = row.low_10y != null ? num(row.low_10y) : '—';
+      const roe = row.roe != null ? num(row.roe) : '—';
+      return `
+      <a class="valuation-card ${row.action}" href="${detailHref(row.name)}" style="text-decoration:none;color:inherit;display:block">
+        <div class="valuation-head"><b>${htmlEscape(row.name)}</b><span class="tag ${row.action}">${valuationActionText[row.action] || row.action}</span></div>
+        <div class="temperature"><strong>${row.temperature ?? '-'}</strong><span>估值温度</span></div>
+        <div class="valuation-metrics">
+          <span>${metric} ${val}</span><span>且慢百分位 ${pctStr}</span>
+          <span>10年最高 ${high}</span><span>10年最低 ${low}</span>
+          <span>ROE ${roe}</span><span>口径 10年</span>
+        </div>
+        <div class="reason">${htmlEscape(row.reason || '')}</div>
+        <div class="muted" style="margin-top:8px">数据来源：且慢每日估值 →</div>
+      </a>`;
+    }
     return `
     <a class="valuation-card ${row.action}" href="${detailHref(row.name)}" style="text-decoration:none;color:inherit;display:block">
       <div class="valuation-head"><b>${htmlEscape(row.name)}</b><span class="tag ${row.action}">${valuationActionText[row.action] || row.action}</span></div>
@@ -439,6 +582,45 @@ function renderValuations(dashboard) {
       <div class="muted" style="margin-top:8px">点击查看历史分位+本指数5y偏离兴趣区 →</div>
     </a>`;
   }).join('');
+}
+
+function stanceClass(stance) {
+  if (stance.includes('主力买入')) return 'buy';
+  if (stance.includes('左侧试探') || stance.includes('拐点')) return 'watch';
+  if (stance.includes('高估')) return 'reduce';
+  return '';
+}
+
+function barHtml(label, score) {
+  const v = Math.max(0, Math.min(100, Number(score ?? 0)));
+  const color = v >= 80 ? '#2ee6a8' : v >= 60 ? '#ffd166' : v >= 40 ? '#4da3ff' : '#ff7373';
+  return `<div class="score-bar-row"><span>${label}</span><div class="score-bar"><i style="width:${v}%;background:${color}"></i></div><b>${score ?? '—'}</b></div>`;
+}
+
+function renderBatter(dash) {
+  const list = document.getElementById('batterList');
+  const meta = document.getElementById('batterMeta');
+  if (!list) return;
+  const rows = dash.rows || [];
+  if (meta) {
+    meta.textContent = `${rows.length} 个品种 · ${dash.generated_at || ''}`;
+  }
+  list.innerHTML = rows.map(row => `
+    <a class="valuation-card ${stanceClass(row.stance || '')}" href="${detailHref(row.name)}" style="text-decoration:none;color:inherit;display:block">
+      <div class="valuation-head">
+        <b>${htmlEscape(row.name)}</b>
+        <span class="tag ${stanceClass(row.stance || '')}">${htmlEscape(row.stance)}</span>
+      </div>
+      <div class="temperature"><strong>${row.total_score ?? '-'}</strong><span>击球分数</span></div>
+      ${barHtml('估值', row.value_score)}
+      ${barHtml('情绪', row.sentiment_score)}
+      ${barHtml('动量', row.momentum_score)}
+      <div class="reason" style="margin-top:8px">${htmlEscape(row.suggested_shares || '')}
+        ${(row.momentum_detail?.turning_up) ? ' · 🔄 动量拐头向上' : ''}
+        ${(row.sentiment_detail?.drawdown_pct != null) ? ` · 距250日高点 ${row.sentiment_detail.drawdown_pct}%` : ''}
+        ${(row.momentum_detail?.mom_12_1_pct != null) ? ` · 12-1动量 ${row.momentum_detail.mom_12_1_pct}%` : ''}
+      </div>
+    </a>`).join('');
 }
 
 function renderExposure(exposure) {
@@ -552,6 +734,26 @@ async function init() {
     if (event.target?.id === 'reasonModal') closeReasonModal();
   });
 
+  // 估值数据源切换（理杏仁 / 且慢）
+  let valuationSource = 'lixinger';
+  const switchBox = document.getElementById('valuationSourceSwitch');
+  if (switchBox) {
+    switchBox.addEventListener('click', async (event) => {
+      const btn = event.target.closest('.switch-btn');
+      if (!btn || btn.dataset.source === valuationSource) return;
+      valuationSource = btn.dataset.source;
+      switchBox.querySelectorAll('.switch-btn').forEach(b => b.classList.toggle('active', b === btn));
+      const meta = document.getElementById('valuationMeta');
+      if (meta) meta.textContent = '切换中…';
+      try {
+        const dash = await getJSON('/api/valuations?source=' + valuationSource);
+        renderValuations(dash);
+      } catch (err) {
+        if (meta) meta.textContent = '加载失败：' + (err && err.message || err);
+      }
+    });
+  }
+
   let summary = null;
   try {
     summary = await getJSON('/api/summary');
@@ -577,9 +779,28 @@ async function init() {
 
   // secondary modules — independent, non-blocking for first paint
   const secondary = [
+    getJSON('/api/batter-score').then(renderBatter).catch(err => {
+      const meta = document.getElementById('batterMeta');
+      if (meta) meta.textContent = '击球分数加载失败';
+      console.warn('batter-score', err);
+    }),
+    getJSON('/api/batter-backtest').then(d => {
+      const box = document.getElementById('batterBacktest');
+      if (!box || d.error) return;
+      const h2h = d.head_to_head_3y || {};
+      box.innerHTML = `
+        <article class="topic-item">
+          <div class="topic-source">📐 回测验证 · 8指数 × 20年（scripts/backtest_batter.py）</div>
+          <h3>击球分数 vs 裸估值买入（3年持有期）</h3>
+          <p>击球分数平均收益 <b style="color:#2ee6a8">${h2h.batter_score?.avg_ret ?? '-'}%</b>/胜率 ${h2h.batter_score?.win_rate ?? '-'}%
+             vs 裸估值 ${h2h.baseline_value_only?.avg_ret ?? '-'}%/胜率 ${h2h.baseline_value_only?.win_rate ?? '-'}%</p>
+          <p>典型案例：创业板指裸估值 3 年 -6.6%（胜率25%），击球分数 +33.4%（胜率67%）——情绪过滤成功避开"低估躺平"；恒生指数买入次数减半、收益反而更高。</p>
+        </article>`;
+    }).catch(() => {}),
     getJSON('/api/valuations').then(v => {
       if (!summary) renderValuations(v);
     }).catch(() => {}),
+    getJSON('/api/decision').then(renderDecision).catch(() => {}),
     getJSON('/api/calibration').then(c => {
       if (!(summary && summary.calibration)) renderCalibration(c);
     }).catch(() => {}),
@@ -604,3 +825,10 @@ init().catch(error => {
   if (sync) sync.textContent = '加载失败';
   document.body.insertAdjacentHTML('beforeend', `<pre style="color:#ff6b6b;padding:12px">${error && error.stack || error}</pre>`);
 });
+
+// PWA: 注册 Service Worker（可添加到桌面当 APP 用）
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('/sw.js').catch(() => {});
+  });
+}

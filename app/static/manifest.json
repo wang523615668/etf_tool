@@ -1,0 +1,22 @@
+{
+  "name": "ETF决策助手",
+  "short_name": "ETF助手",
+  "description": "估值温度 + 自主决策 + E大信号 + wu2198 跟踪",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#131629",
+  "theme_color": "#131629",
+  "orientation": "portrait",
+  "icons": [
+    {
+      "src": "/static/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "/static/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

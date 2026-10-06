@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+import time
 import yaml
 from collections import defaultdict
 from datetime import date, datetime
@@ -9,13 +10,15 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import Body, FastAPI
-from fastapi.responses import HTMLResponse
+from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import HTMLResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.data_sources.long_win import load_long_win
 from app.data_sources.danjuan_valuations import (
     build_valuation_snapshot as build_danjuan_valuation_snapshot,
 )
+from app.data_sources.self_valuations import build_self_rows
 from app.data_sources.lixinger import (
     INDEX_CONFIG as LIXINGER_INDEX_CONFIG,
     build_valuation_snapshot as build_lixinger_valuation_snapshot,
@@ -36,6 +39,8 @@ from app.account_ledger import (
     market_position_guide,
     save_account,
 )
+from app import pending_reminders
+
 
 BASE = Path(__file__).resolve().parents[1]
 DATA = BASE / "data"
@@ -118,11 +123,55 @@ INDEX_KNOWLEDGE = DATA / "index_knowledge.json"
 CALIBRATION_WINDOW_DAYS = 45
 
 app = FastAPI(title="ETF 拯救世界投资仪表盘")
-app.mount("/static", StaticFiles(directory=STATIC), name="static")
+app.add_middleware(GZipMiddleware, minimum_size=500, compresslevel=6)
+
+
+class _VersionedStaticFiles(StaticFiles):
+    """带 ?v= 版本号的静态资源返回长缓存头（1年），无版本号资源走默认 ETag。"""
+
+    async def get_response(self, path, scope):
+        resp = await super().get_response(path, scope)
+        if resp.status_code == 200 and scope.get("query_string"):
+            resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        return resp
+
+
+app.mount("/static", _VersionedStaticFiles(directory=STATIC), name="static")
+
+
+@app.get("/sw.js", response_class=PlainTextResponse)
+async def service_worker():
+    """根路径 Service Worker：允许 scope=/ 控制首页，支持离线打开。"""
+    sw_path = STATIC / "sw.js"
+    if not sw_path.exists():
+        return PlainTextResponse("", status_code=404)
+    return PlainTextResponse(
+        sw_path.read_text(encoding="utf-8"),
+        media_type="application/javascript",
+        headers={"Service-Worker-Allowed": "/", "Cache-Control": "no-cache"},
+    )
 
 
 def load_json(name: str) -> dict[str, Any]:
-    return json.loads((DATA / name).read_text(encoding="utf-8"))
+    # mtime-based process cache: these files are read many times per request
+    # (summary calls load_json + compare_signals + ed_talk_archive repeatedly);
+    # re-reading & re-parsing multi-MB JSON every call was a measured hotspot.
+    path = DATA / name
+    try:
+        mt = path.stat().st_mtime_ns
+    except OSError:
+        return {}
+    hit = _JSON_CACHE.get(name)
+    if hit and hit[0] == mt:
+        return hit[1]
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if len(_JSON_CACHE) > 64:
+        _JSON_CACHE.clear()
+    _JSON_CACHE[name] = (mt, data)
+    return data
+
+
+_JSON_CACHE: dict[str, tuple[int, dict[str, Any]]] = {}
 
 
 def long_win_payload() -> dict[str, Any]:
@@ -559,14 +608,27 @@ def _valuation_action(pe_pct: float | None, pb_pct: float | None, stale: bool) -
 
 
 def valuation_rows(source: str = "lixinger") -> list[dict[str, Any]]:
-    """Prefer 理杏仁; fallback 且慢; then local JZTZ matrix if present."""
+    """Prefer 理杏仁; fallback 且慢; then local JZTZ matrix if present.
+    source='qieman' 时用且慢口径（8年百分位 + 强周期PB）"""
     source = (source or "lixinger").lower()
-    if source in {"lixinger", "auto", "default"}:
+    if source == "qieman":
+        # 且慢真实估值数据（每日 Playwright 抓取缓存）
         try:
-            dash = build_lixinger_valuation_snapshot()
+            from app.data_sources.qieman_valuations import build_valuation_snapshot as build_qieman_snapshot
+            dash = build_qieman_snapshot()
             rows = dash.get("rows") or []
             if rows:
                 return rows
+        except Exception:
+            pass
+        return valuation_rows(source="lixinger")
+    if source in {"lixinger", "auto", "default"}:
+        try:
+            dash = build_lixinger_valuation_snapshot(allow_network=False)
+            rows = dash.get("rows") or []
+            if rows:
+                dash = apply_valuation_rescue(dash)
+                return dash.get("rows") or []
         except Exception:
             pass
     if source in {"danjuan", "auto", "default", "lixinger"}:
@@ -617,14 +679,95 @@ def valuation_rows(source: str = "lixinger") -> list[dict[str, Any]]:
     )
 
 
+def apply_valuation_rescue(dash: dict[str, Any]) -> dict[str, Any]:
+    """两层兜底：理杏仁过期(pause)的指数先由蛋卷顶上，蛋卷也没有的用
+    理杏仁历史+实时价格自算（self）。就地修改并返回 dash。"""
+    try:
+        dj = build_danjuan_valuation_snapshot()
+        dj_by_name = {r.get("name"): r for r in (dj.get("rows") or [])}
+        replaced = 0
+        for i, r in enumerate(dash.get("rows") or []):
+            if r.get("action") == "pause":
+                alt = dj_by_name.get(r.get("name"))
+                if alt and alt.get("action") != "pause":
+                    merged = dict(alt)
+                    merged["source_override"] = "danjuan"
+                    merged["orig_reason"] = r.get("reason")
+                    dash["rows"][i] = merged
+                    replaced += 1
+        fr = dash.setdefault("freshness", {})
+        if replaced:
+            counts2: dict[str, int] = {}
+            for r in dash["rows"]:
+                counts2[r.get("action")] = counts2.get(r.get("action"), 0) + 1
+            dash["counts"] = counts2
+            fr["danjuan_rescued"] = replaced
+            fr["note"] = f"理杏仁CN数据滞后，{replaced} 个指数估值由蛋卷基金兜底"
+        # 第二层兜底：蛋卷也没有的（全指金融/红利低波100）用理杏仁历史+实时价自算
+        still_paused = [
+            r.get("name") for r in dash.get("rows") or [] if r.get("action") == "pause"
+        ]
+        self_rows = build_self_rows(still_paused)
+        if self_rows:
+            self_by_name = {r["name"]: r for r in self_rows}
+            for i, r in enumerate(dash["rows"]):
+                if r.get("action") == "pause" and self_by_name.get(r.get("name")):
+                    dash["rows"][i] = self_by_name[r["name"]]
+            fr["self_rescued"] = len(self_rows)
+            note = fr.get("note") or ""
+            extra = (
+                f"；另 {len(self_rows)} 个由理杏仁历史+实时价格自算兜底"
+                "（红利低波100 以 515100ETF 价代理）"
+            )
+            fr["note"] = (note + extra) if note else extra.strip("；")
+        if self_rows:
+            counts3: dict[str, int] = {}
+            for r in dash["rows"]:
+                counts3[r.get("action")] = counts3.get(r.get("action"), 0) + 1
+            if counts3 != dash.get("counts"):
+                dash["counts"] = counts3
+    except Exception:
+        pass  # 兜底失败不影响主快照
+    return dash
+
+
+# 估值快照进程内 TTL 缓存：估值数据日频（17:30 刷新），180s 缓存避免首页
+# 多 API（summary/valuations/decision/market-position/ledger/action-sheet）并发时重复重算（实测 /api/summary 11s）
+_VAL_CACHE: dict[str, tuple[float, dict[str, Any]]] = {}
+_VAL_CACHE_TTL = 180.0
+
+
 def valuation_dashboard(source: str = "lixinger") -> dict[str, Any]:
     source = (source or "lixinger").lower()
+    now = time.time()
+    hit = _VAL_CACHE.get(source)
+    if hit and now - hit[0] < _VAL_CACHE_TTL:
+        return hit[1]
+    dash = _valuation_dashboard_impl(source)
+    _VAL_CACHE[source] = (now, dash)
+    return dash
+
+
+def _valuation_dashboard_impl(source: str = "lixinger") -> dict[str, Any]:
+    source = (source or "lixinger").lower()
     errors: list[str] = []
+    if source == "qieman":
+        try:
+            from app.data_sources.qieman_valuations import build_valuation_snapshot as build_qieman_snapshot
+            dash = build_qieman_snapshot()
+            if dash.get("rows"):
+                return dash
+        except Exception:
+            pass
+        source = "lixinger"
     if source in {"lixinger", "auto", "default"}:
         try:
             # Web path: cache only — never burn 理杏仁 token on page open
             dash = build_lixinger_valuation_snapshot(allow_network=False)
             if dash.get("rows"):
+                # 理杏仁免费层 CN 数据滞后可达数周：过期暂停(pause)的指数用蛋卷当前数据顶上，
+                # 蛋卷也没有的保留原行（pause）
+                dash = apply_valuation_rescue(dash)
                 return dash
             errors.append("lixinger empty/cache-missing")
         except Exception as exc:
@@ -805,7 +948,12 @@ def api_summary() -> dict[str, Any]:
         row = dict(s)
         code = str(row.get("code") or "").split(".")[0]
         if row.get("cp") is None:
-            row["cp"] = cp_by_name.get(row.get("name")) or cp_by_code.get(code)
+            # 优先 norm_name（归一化名），再 name
+            row["cp"] = (
+                cp_by_name.get(row.get("norm_name"))
+                or cp_by_name.get(row.get("name"))
+                or cp_by_code.get(code)
+            )
         priced.append(row)
     filtered = apply_execution_filter(priced)
     suppressed = filtered.get("suppressed_signals") or []
@@ -832,7 +980,7 @@ def api_summary() -> dict[str, Any]:
         },
         "valuation_freshness": valuation.get("freshness") or valuation_freshness(),
         "valuation_rows": (valuation.get("rows") or [])[:12],
-        "valuation_dashboard": valuation,
+        "valuation_dashboard": {**valuation, "rows": (valuation.get("rows") or [])[:12]},
         "plan_exposure": plan_exposure(),
         "calibration": api_calibration(),
         "topic_library": {
@@ -898,11 +1046,17 @@ def api_action_sheet() -> dict[str, Any]:
             row["cp"] = cp_by_name.get(row.get("name"))
         priced.append(row)
     filtered = apply_execution_filter(priced)
-    return action_sheet(
-        signals=filtered.get("signals") or [],
+    # ---- 提醒追踪：今日 actionable 信号并入 pending（没买就持续提醒） ----
+    actionable = filtered.get("signals") or []
+    pending = pending_reminders.upsert_from_signals(actionable)
+    pending = pending_reminders.filter_dismissed(pending)
+    sheet = action_sheet(
+        signals=actionable,
         suppressed=filtered.get("suppressed_signals") or [],
         valuation_rows=valuation.get("rows") or [],
     )
+    sheet["pending_reminders"] = pending
+    return sheet
 
 
 @app.get("/api/daily-push")
@@ -950,6 +1104,43 @@ def api_my_trades_settings(body: dict[str, Any] = Body(default_factory=dict)) ->
     return update_my_trade_settings(body or {})
 
 
+@app.get("/api/pending-reminders")
+def api_pending_reminders() -> dict[str, Any]:
+    """当前未决提醒（发了信号但你还没执行/忽略的）。"""
+    rems = pending_reminders.filter_dismissed(pending_reminders._load().get("reminders") or [])
+    return {"reminders": rems,
+            "lines": pending_reminders.format_pending_lines(rems)}
+
+
+@app.post("/api/pending-reminders/bought")
+def api_pending_bought(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    """告知已买入：移除提醒 + 写入 my_trades（触发冷却压制）。"""
+    name = str(body.get("name") or "")
+    if not name:
+        raise ValueError("name 必填")
+    removed = pending_reminders.mark_bought(name)
+    trade = add_trade({
+        "action": str(body.get("action") or "buy"),
+        "name": name,
+        "code": body.get("code"),
+        "category": body.get("category"),
+        "shares": body.get("shares", 1),
+        "price": body.get("price"),
+        "note": "回复确认买入",
+    })
+    return {"ok": True, "removed_reminder": removed, "trade": trade["trade"]}
+
+
+@app.post("/api/pending-reminders/dismiss")
+def api_pending_dismiss(body: dict[str, Any] = Body(default_factory=dict)) -> dict[str, Any]:
+    """明确忽略：30天内不再提。"""
+    name = str(body.get("name") or "")
+    if not name:
+        raise ValueError("name 必填")
+    removed = pending_reminders.dismiss(name)
+    return {"ok": removed is not None, "dismissed": removed}
+
+
 @app.get("/api/sunburst/{plan_key}")
 def api_sunburst(plan_key: str) -> dict[str, Any]:
     if plan_key not in {"long_win_150", "long_win_s"}:
@@ -962,9 +1153,17 @@ def api_compare() -> list[dict[str, Any]]:
     return compare_signals()
 
 
+_CALIB_CACHE: tuple[float, dict[str, Any]] | None = None
+_CALIB_TTL = 600.0  # 校准池统计低频变化，10 分钟缓存（compare_signals 每次全量重算很贵）
+
+
 @app.get("/api/calibration")
 def api_calibration() -> dict[str, Any]:
     """规则校准池：本地提醒 vs E大操作匹配统计。"""
+    global _CALIB_CACHE
+    now = time.time()
+    if _CALIB_CACHE and now - _CALIB_CACHE[0] < _CALIB_TTL:
+        return _CALIB_CACHE[1]
     rows = compare_signals()
     matched = [r for r in rows if r.get("ed_matched")]
     local_unmatched = [r for r in rows if r.get("source") == "local_model" and not r.get("ed_matched")]
@@ -985,11 +1184,40 @@ def api_calibration() -> dict[str, Any]:
         },
         "generated_at": datetime.now().isoformat(timespec="seconds"),
     }
+    _CALIB_CACHE = (now, result)
+    return result
+
+
+@app.get("/api/batter-backtest")
+def api_batter_backtest() -> dict[str, Any]:
+    """击球分数回测结果（scripts/backtest_batter.py 产物）。"""
+    path = DATA / "backtest_batter.json"
+    if not path.exists():
+        return {"error": "尚未运行回测"}
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+@app.get("/api/batter-score")
+def api_batter_score(force: int = 0) -> dict[str, Any]:
+    """击球分数：估值40% + 情绪30% + 动量30% → 合成买卖档位。"""
+    from app.batter_score import batter_dashboard
+    return batter_dashboard(force=bool(force))
 
 
 @app.get("/api/valuations")
 def api_valuations(source: str = "lixinger") -> dict[str, Any]:
     return valuation_dashboard(source=source)
+
+
+@app.get("/api/decision")
+def api_decision(source: str = "lixinger") -> dict[str, Any]:
+    """自主决策引擎：估值温度 + E大历史模式 + 我的持仓 → 品种级建议"""
+    try:
+        from app.decision_engine import build_decision_table
+        rows = valuation_rows(source=source)
+        return build_decision_table(rows)
+    except Exception as exc:
+        return {"error": str(exc), "total": 0, "rows": []}
 
 
 @app.get("/api/index-list")
@@ -1004,6 +1232,43 @@ def api_index_list() -> dict[str, Any]:
         for name, cfg in LIXINGER_INDEX_CONFIG.items()
     ]
     return {"total": len(items), "items": items}
+
+
+@app.get("/api/self-daily")
+def api_self_daily() -> dict[str, Any]:
+    """自算估值序列索引: 全部自选指数 + 全市场主板(A股E大口径), 2018→今日频.
+    方法=当日全A快照(东财PE_TTM/PB_MRQ)×当前成分·剔亏损·取中位数; PIT历史待回填."""
+    d = BASE / "data" / "self_daily"
+    out = []
+    if not d.exists():
+        return {"items": [], "note": "自算序列尚未生成"}
+    for fp in sorted(d.glob("*.json")):
+        try:
+            j = json.loads(fp.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if j.get("degenerate"):
+            continue
+        out.append({
+            "name": j.get("name"), "code": j.get("code"),
+            "latest": j.get("latest"), "p5y": j.get("p5y"), "p10y": j.get("p10y"),
+            "days": len(j.get("rows") or []),
+            "pit": j.get("pit", False), "method": j.get("method"), "note": j.get("note"),
+        })
+    out.sort(key=lambda x: (x["code"] in ("000985", "MKT_MAIN", "MKT_ALL"), x["name"] or ""))
+    return {"total": len(out), "items": out,
+            "generated_max": max((x["latest"]["date"] if x.get("latest") else "" for x in out), default="")}
+
+
+@app.get("/api/self-daily/{code}")
+def api_self_daily_detail(code: str) -> dict[str, Any]:
+    fp = BASE / "data" / "self_daily" / f"{code}.json"
+    if not fp.exists():
+        return {"error": f"no self-calc series for {code}"}
+    try:
+        return json.loads(fp.read_text(encoding="utf-8"))
+    except Exception as exc:
+        return {"error": str(exc)}
 
 
 @app.get("/api/index/{name}")
