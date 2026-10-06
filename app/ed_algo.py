@@ -39,6 +39,14 @@ def _load(fp, default):
     except Exception:
         return default
 
+_LIX = None
+def _lix():
+    """理杏仁历史时点成分表(命名注意: 里面存的是{指数名:{asof:{日期:[代码]}}})"""
+    global _LIX
+    if _LIX is None:
+        _LIX = _load(f"{DATA}/ed_cons_lixinger.json", {})
+    return _LIX
+
 def load_config():
     j = _load(f"{DATA}/ed_perindex_best.json", {})
     out = {}
@@ -123,6 +131,7 @@ MODE_CN = {
     "pit": "当时成分(按纳入日期还原)",
     "mktcap": "当时成分(按市值排名还原)",
     "bspit": "当时成分(月度名单)",
+    "lixinger": "当时成分(理杏仁历史时点名单)",
 }
 ALGO_CN = {
     "中位TTM剔亏": "滚动PE·剔除亏损·取中位",
@@ -162,6 +171,12 @@ def pool(name, snap, ctx, mode="current"):
                        if c.startswith(prefs) and r.get("TOTAL_MARKET_CAP")),
                       key=lambda x: -x[1]["TOTAL_MARKET_CAP"])
         return [r for _, r in cand[lo:hi]]
+    if mode == "lixinger":
+        # 理杏仁历史时点成分(按月/真值日快照, 取不晚于当日的最近一次)
+        j = (_lix().get(name) or {}).get("asof") or {}
+        ds = [d for d in j if d <= ctx.date]
+        if not ds: return []
+        return [snap[c] for c in j[max(ds)] if c in snap]
     if name == "创业板综":
         return [r for c, r in snap.items() if c.startswith("30")]
     idx_code = ctx.cur_map.get(name)

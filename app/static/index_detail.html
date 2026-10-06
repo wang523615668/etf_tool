@@ -654,6 +654,7 @@
             const mode = self.list_mode || (self.pit ? 'bspit' : 'current');
             let note = '';
             if (mode === 'pit') note = '<br>· 成分按当时名单(纳入日期)还原, 历史分位已按当时名单重算';
+            else if (mode === 'lixinger') note = '<br>· 成分=理杏仁历史时点名单(按月快照回滚, 2018起)：指数半年调样与临时调整均已还原<br>· 精度最高的一种(行业指数此前 10~17% 的偏差即由此消除)';
             else if (mode === 'bspit') note = '<br>· 成分按当时名单(月度名单)还原, 历史分位已按当时名单重算<br>· 名单批次最多滞后约4个月, 宽基序列残留约 ±4% 系统偏差';
             else if (mode === 'mktcap') note = '<br>· 成分按当日市值排名还原(自建名单, 非官方成分股), 历史分位已按当时名单重算';
             else note = '<br>· 暂无免费历史名单, 成分按当前名单固定, 存在名单漂移';
