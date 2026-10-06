@@ -58,6 +58,47 @@ def _p5y_pb(rows: list[dict], pb: float | None, latest_date: str) -> float | Non
     return round(sum(1 for x in w if x <= pb) / len(w), 4)
 
 
+def ed_analysis(rows: list[dict], latest_date: str) -> dict[str, Any]:
+    """E大估值表同款分析行(月末口径): 历史高低/五十年均/现÷五十年比值/PE·PB五十年百分位"""
+    out: dict[str, Any] = {}
+    pes = [r["pe"] for r in rows if r.get("pe")]
+    if not pes:
+        return out
+    out["pe_hist_max"] = round(max(pes), 2)
+    out["pe_hist_min"] = round(min(pes), 2)
+    me = []
+    bym: dict[str, dict] = {}
+    for r in rows:
+        ym = r["date"][:7]
+        if r["date"] <= latest_date and r.get("pe"):
+            bym[ym] = r
+    me = sorted(bym.values(), key=lambda x: x["date"])
+    def _win(years):
+        d0 = (datetime.date.fromisoformat(latest_date) - datetime.timedelta(days=int(365.25 * years))).isoformat()
+        return [m["pe"] for m in me if m["date"] >= d0]
+    def _winpb(years):
+        d0 = (datetime.date.fromisoformat(latest_date) - datetime.timedelta(days=int(365.25 * years))).isoformat()
+        return [m["pb"] for m in me if m["date"] >= d0 and m.get("pb")]
+    cur = (rows[-1].get("pe") if rows[-1]["date"] <= latest_date else None)
+    cur = next((r["pe"] for r in reversed(rows) if r["date"] == latest_date), None) or cur
+    for yrs, tag in ((5, "5"), (10, "10")):
+        w = _win(yrs)
+        if len(w) >= 24:
+            avg = sum(w) / len(w)
+            out[f"pe_avg{tag}y"] = round(avg, 2)
+            if cur:
+                out[f"pe_vs{tag}y"] = round((cur / avg - 1) * 100, 1)      # 现/五 比值%
+                out[f"pe_pct{tag}y"] = round(sum(1 for x in w if x <= cur) / len(w) * 100, 1)  # 百分位%
+            wpb = _winpb(yrs)
+            if len(wpb) >= 24:
+                avgpb = sum(wpb) / len(wpb)
+                curpb = next((r["pb"] for r in reversed(rows) if r["date"] == latest_date and r.get("pb")), None)
+                if curpb:
+                    out[f"pb_vs{tag}y"] = round((curpb / avgpb - 1) * 100, 1)
+                    out[f"pb_pct{tag}y"] = round(sum(1 for x in wpb if x <= curpb) / len(wpb) * 100, 1)
+    return out
+
+
 def _action(pe_pct: float | None, pb_pct: float | None, hist_short: bool = False) -> tuple[str, str]:
     values = [v for v in (pe_pct, pb_pct) if v is not None]
     if not values:
@@ -105,6 +146,7 @@ def apply_self_valuations(rows: list[dict[str, Any]]) -> tuple[list[dict[str, An
             "self_days": len(d.get("rows") or []),
             "self_dev": d.get("ed_dev_med"),  # 对E大表的中位偏差%
         })
+        rr.update(ed_analysis(rows_all, date))
         rows[i] = rr
         covered += 1
     # 自算独有、理杏仁行里没有的指数(如自建全市场) → 追加
@@ -123,6 +165,7 @@ def apply_self_valuations(rows: list[dict[str, Any]]) -> tuple[list[dict[str, An
             "temperature": round(pe_pct) if pe_pct is not None else None,
             "snapshot_date": latest.get("date"), "source": "self", "self_engine": True,
         }
-        rr["action"], rr["reason"] = _action(rr["pe_percentile"], None)
+        rr["action"], rr["reason"] = _action(rr["pe_percentile"], None, hist_short=not enough)
+        rr.update(ed_analysis(d.get("rows") or [], latest.get("date") or ""))
         rows.append(rr)
     return rows, covered

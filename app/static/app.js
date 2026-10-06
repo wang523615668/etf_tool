@@ -572,14 +572,22 @@ function renderValuations(dashboard) {
       <div class="valuation-head"><b>${htmlEscape(row.name)}</b><span class="tag ${row.action}">${valuationActionText[row.action] || row.action}</span></div>
       <div class="temperature"><strong>${row.temperature ?? '-'}</strong><span>估值温度</span></div>
       ${row.double_avg_buy ? '<div class="double-avg-badge">✅ 双均线低估</div>' : ''}
+      ${row.self_engine ? `
+      <div class="valuation-metrics">
+        <span>PE ${num(row.pe)}</span><span>PB ${num(row.pb)}</span>
+        <span>现/5年均 ${fmtDev(row.pe_vs5y)}</span><span>PE 5年分位 ${row.pe_pct5y != null ? row.pe_pct5y.toFixed(1) + '%' : '—'}</span>
+        <span>现/10年均 ${fmtDev(row.pe_vs10y)}</span><span>PE 10年分位 ${row.pe_pct10y != null ? row.pe_pct10y.toFixed(1) + '%' : '—'}</span>
+        <span>5年均PE ${num(row.pe_avg5y)}</span><span>10年均PE ${num(row.pe_avg10y)}</span>
+        <span>历史高低 ${num(row.pe_hist_max)}/${num(row.pe_hist_min)}</span><span>PB现/5年 ${fmtDev(row.pb_vs5y)}</span>
+      </div>` : `
       <div class="valuation-metrics">
         <span>PE ${num(row.pe)}</span><span>PE分位 ${pct(row.pe_percentile)}</span>
         <span>PB ${num(row.pb)}</span><span>PB分位 ${pct(row.pb_percentile)}</span>
         <span>PE偏离 ${fmtDev(row.pe_dev_pct)}</span><span>PE极值 ${peExt}</span>
         <span>PB偏离 ${fmtDev(row.pb_dev_pct)}</span><span>PB极值 ${pbExt}</span>
-      </div>
+      </div>`}
       <div class="reason">${htmlEscape(row.reason || '')}${interest ? ' · ' + interest : ''}</div>
-      <div class="muted" style="margin-top:8px">点击查看历史分位+本指数5y偏离兴趣区 →</div>
+      <div class="muted" style="margin-top:8px">${row.self_engine ? `自算引擎 · ${row.self_algo || ''} · 对E大偏差 ${row.self_dev != null ? row.self_dev + '%' : '—'} · ${row.snapshot_date || ''} →` : '点击查看历史分位+本指数5y偏离兴趣区 →'}</div>
     </a>`;
   }).join('');
 }
