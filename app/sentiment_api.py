@@ -22,19 +22,22 @@ def sentiment():
     rz = defaultdict(float)
     for r in m:
         try:
-            rz[r["trade_date"][:6]] += float(r.get("rzrqye") or 0)
+            v = float(r.get("rzrqye") or 0)
+            if v == v and v > 0:           # 过滤 NaN
+                rz[r["trade_date"][:6]] += v
         except (TypeError, ValueError, KeyError):
             pass
     rz_m = [{"m": f"{k[:4]}-{k[4:]}", "v": round(v / 1e12, 3)} for k, v in sorted(rz.items())]
-    # 北向: 持股市值(亿元), 按月
+    # 北向: 当日净流入(百万元) → 月合计(亿)
     h = _load("ts_hsgt.json") or []
     nm = {}
     for r in h:
         try:
-            d = str(r.get("trade_date")); v = float(r.get("north_money"))
-            if v: nm[d[:6]] = v / 1e4   # 万元→亿
+            d = str(r.get("trade_date")); v = float(r.get("north_money") or 0)
+            if v == v and abs(v) > 1e-9:
+                nm[d[:6]] = nm.get(d[:6], 0) + v / 100   # 百万→亿, 当月合计
         except (TypeError, ValueError): pass
-    hgt_m = [{"m": f"{k[:4]}-{k[4:]}", "v": round(v, 0)} for k, v in sorted(nm.items())]
+    hgt_m = [{"m": f"{k[:4]}-{k[4:]}", "v": round(v, 1)} for k, v in sorted(nm.items())]
     qs = sorted(fi["quarters"])
     cur = fi["quarters"].get(qs[-1]) if qs else None
     prev = fi["quarters"].get(qs[-2]) if len(qs) > 1 else None
