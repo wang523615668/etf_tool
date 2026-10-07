@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>市场情绪 · 基金仓位/两融/北向</title>
+<link rel="stylesheet" href="/static/style.css?v=20261007b" />
+<style>
+  body { background:#f3f6fc; color:#17233f; font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif; margin:0; padding:18px; font-size:16px; }
+  .wrap { max-width:1080px; margin:0 auto; }
+  h1 { font-size:22px; margin:0 0 6px; }
+  h2 { font-size:17px; margin:26px 0 8px; }
+  .sub { color:#5b6b85; font-size:14px; line-height:1.8; margin-bottom:14px; }
+  .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(200px,1fr)); gap:12px; margin-bottom:8px; }
+  .metric-card { background:#fff; border:1px solid rgba(100,125,175,.28); border-radius:14px; padding:14px; }
+  .metric-card .label { color:#5b6b85; font-size:13px; }
+  .metric-card strong { display:block; margin-top:6px; font-size:22px; }
+  .hint { font-size:13px; color:#5b6b85; margin-top:6px; }
+  table { width:100%; border-collapse:collapse; font-size:15px; background:#fff; border-radius:12px; overflow:hidden; }
+  th,td { padding:10px 8px; border-bottom:1px solid rgba(100,125,175,.22); text-align:right; }
+  th:first-child,td:first-child { text-align:left; }
+  th { color:#45577a; background:#eef2fa; font-weight:600; }
+  .pos { color:#d92f2f; } .neg { color:#0a9d58; }
+  .spark { display:flex; align-items:flex-end; gap:1px; height:60px; margin:6px 0; }
+  .spark div { flex:1; background:#7ba1e8; border-radius:1px; min-height:1px; }
+  .spark div.hl { background:#d92f2f; }
+  a.back { color:#2563eb; text-decoration:none; font-size:14px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <a href="/">← 返回首页</a>
+  <h1>市场情绪</h1>
+  <div class="sub">主动权益基金重仓股行业配置（季度）＋ 两融余额 ＋ 北向持仓 —— 反向指标视角</div>
+  <div class="cards" id="cards"></div>
+  <h2>基金行业仓位（季度序列）</h2>
+  <div style="overflow-x:auto"><table id="tbl"><thead><tr>
+    <th>报告期</th><th>医药</th><th>科技</th><th>消费</th><th>金融</th><th>制造</th><th>周期</th>
+    <th>重仓市值(亿)</th><th>基金数</th></tr></thead><tbody></tbody></table></div>
+  <h2>医药 / 科技 拥挤度</h2>
+  <div class="sub" id="spark-sub"></div>
+  <div class="spark" id="spark-med"></div>
+  <div class="spark" id="spark-tech"></div>
+  <h2>两融余额（万亿，月末）</h2>
+  <div class="spark" id="spark-rz"></div>
+  <h2>北向持仓（亿，月末）</h2>
+  <div class="spark" id="spark-nm"></div>
+  <div class="sub" style="margin-top:14px">
+    数据源：主动基金季报十大重仓股（申万一级聚合，剔港股）· 融资融券余额 · 陆股通持股。<br>
+    用法参考：医药/科技仓位的历史极值是反向信号 —— 基金拥挤处谨慎，无人问津处留意。
+  </div>
+</div>
+<script>
+const fmt = (v, d=1) => v == null ? "-" : v.toFixed(d);
+async function main() {
+  const r = await fetch("/api/sentiment").then(x => x.json()).catch(() => null);
+  if (!r || !r.fund) { document.querySelector(".sub").textContent = "数据加载失败"; return; }
+  const cur = r.fund.current, prev = r.fund.prev;
+  const delta = k => (cur && prev) ? cur.groups[k] - prev.groups[k] : null;
+  const card = (label, val, d) => `<div class="metric-card"><div class="label">${label}</div>
+    <strong>${val}</strong></div>`;
+  const dq = cur ? cur.q.slice(0,4)+"Q"+(Number(cur.q.slice(4,6))/3) : "-";
+  document.getElementById("cards").innerHTML =
+    card("医药仓位 ("+dq+")", fmt(cur?.groups["医药"]) + "%") +
+    card("科技仓位", fmt(cur?.groups["科技"]) + "%") +
+    card("医药环比", (delta("医药")>=0?"+":"") + fmt(delta("医药")) + "pct") +
+    card("科技环比", (delta("科技")>=0?"+":"") + fmt(delta("科技")) + "pct") +
+    card("覆盖基金", cur ? cur.n_funds + " 只" : "-") +
+    card("重仓市值", cur ? Math.round(cur.mkv_yi/100)/100 + " 万亿" : "-");
+  const tb = document.querySelector("#tbl tbody");
+  tb.innerHTML = [...r.fund.quarters].reverse().map(q => `<tr>
+    <td>${q.q.slice(0,4)}Q${Number(q.q.slice(4,6))/3}</td>
+    <td class="${q.groups["医药"]<5?"neg":""}">${fmt(q.groups["医药"])}</td>
+    <td class="${q.groups["科技"]>45?"pos":""}">${fmt(q.groups["科技"])}</td>
+    <td>${fmt(q.groups["消费"])}</td><td>${fmt(q.groups["金融"])}</td>
+    <td>${fmt(q.groups["制造"])}</td><td>${fmt(q.groups["周期"])}</td>
+    <td>${Math.round(q.mkv_yi).toLocaleString()}</td><td>${q.n_funds}</td></tr>`).join("");
+  const qs = r.fund.quarters;
+  const spark = (el, items, color, hi) => {
+    const mx = Math.max(...items.map(x => x[1]));
+    el.innerHTML = items.map(x => `<div class="${x[1]>=hi?"hl":""}" style="height:${x[1]/mx*100}%" title="${x[0]}: ${fmt(x[1])}"></div>`).join("");
+  };
+  document.getElementById("spark-sub").innerHTML =
+    `医药: 最低 <b class="neg">${fmt(r.fund.summary?.med_min?.[1])}% (${r.fund.summary?.med_min?.[0].slice(0,4)}Q${Number(r.fund.summary?.med_min?.[0].slice(4,6))/3})</b>` +
+    ` · 最高 <b class="pos">${fmt(r.fund.summary?.med_max?.[1])}% (${r.fund.summary?.med_max?.[0].slice(0,4)}Q${Number(r.fund.summary?.med_max?.[0].slice(4,6))/3})</b>` +
+    ` ｜ 科技: 最高 <b class="pos">${fmt(r.fund.summary?.tech_max?.[1])}%</b>（红色=极值区）`;
+  spark(document.getElementById("spark-med"), qs.map(q=>[q.q, q.groups["医药"]]), null, 5);
+  spark(document.getElementById("spark-tech"), qs.map(q=>[q.q, q.groups["科技"]]), null, 45);
+  const rz = r.margin_yi || [];
+  const rzm = Math.max(...rz.map(x=>x.v));
+  document.getElementById("spark-rz").innerHTML = rz.map(x =>
+    `<div style="height:${x.v/rzm*100}%" title="${x.m}: ${x.v}万亿"></div>`).join("");
+  const nm = r.north_yi || [];
+  if (nm.length) {
+    const nmx = Math.max(...nm.map(x=>x.v));
+    document.getElementById("spark-nm").innerHTML = nm.map(x =>
+      `<div style="height:${x.v/nmx*100}%" title="${x.m}: ${Math.round(x.v)}亿"></div>`).join("");
+  } else { document.getElementById("spark-nm").innerHTML = "<div class='sub'>无数据</div>"; }
+}
+main();
+</script>
+</body>
+</html>

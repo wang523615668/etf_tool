@@ -123,6 +123,8 @@ INDEX_KNOWLEDGE = DATA / "index_knowledge.json"
 CALIBRATION_WINDOW_DAYS = 45
 
 app = FastAPI(title="ETF 拯救世界投资仪表盘")
+from app.sentiment_api import router as sentiment_router
+app.include_router(sentiment_router)
 app.add_middleware(GZipMiddleware, minimum_size=500, compresslevel=6)
 
 
@@ -970,6 +972,15 @@ def menpiao_page() -> str:
     page = STATIC / "menpiao.html"
     if not page.exists():
         return "<h1>menpiao page missing</h1>"
+    return page.read_text(encoding="utf-8")
+
+
+@app.get("/sentiment", response_class=HTMLResponse)
+def sentiment_page() -> str:
+    """市场情绪: 基金行业仓位(季度) + 两融 + 北向。"""
+    page = STATIC / "sentiment.html"
+    if not page.exists():
+        return "<h1>sentiment page missing</h1>"
     return page.read_text(encoding="utf-8")
 
 
