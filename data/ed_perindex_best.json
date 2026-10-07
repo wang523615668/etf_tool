@@ -1,0 +1,117 @@
+{
+ "note": "s70 统一标定(邮件72日期+散文18锚点) 20261006-2122 | 20261007-1125: 食品饮料列 000815细分食品(50只,pit)→申万801120食品饮料(122只,sw)：E大真值6日偏差 9.6%→0.11%（留出日-2.0%），000815官方名本就是「细分食品」非「食品饮料」 | 20261007-1144: 创业板综/全市场加权 加 pe_cap=200(剔除微利股PE>200): 均|偏差| 6.02%→0.55% / 6.38%→1.49%; 阈值175~250宽平台+留出验证通过; 其余列不加(加了会变差: 全指信息+8.6pp/中证1000+6.6pp)",
+ "generated": "20261007-142101",
+ "indices": {
+  "上证50": {
+   "algo": "中位TTM剔亏",
+   "list": "lixinger"
+  },
+  "沪深300": {
+   "algo": "中位TTM剔亏",
+   "list": "lixinger"
+  },
+  "中证500": {
+   "algo": "中位TTM剔亏",
+   "list": "lixinger"
+  },
+  "中证1000": {
+   "algo": "中位TTM剔亏",
+   "list": "lixinger"
+  },
+  "创业板指": {
+   "algo": "中位TTM剔亏",
+   "list": "lixinger"
+  },
+  "创业板综": {
+   "algo": "中位TTM剔亏",
+   "list": "current",
+   "pe_cap": 200
+  },
+  "科创50": {
+   "algo": "中位TTM剔亏",
+   "list": "lixinger"
+  },
+  "上证180": {
+   "algo": "中位TTM剔亏",
+   "list": "lixinger"
+  },
+  "中证红利": {
+   "algo": "中位TTM剔亏",
+   "list": "lixinger"
+  },
+  "中证医疗": {
+   "algo": "中位TTM剔亏",
+   "list": "lixinger"
+  },
+  "全指医药": {
+   "algo": "中位TTM剔亏",
+   "list": "lixinger"
+  },
+  "全指金融": {
+   "algo": "中位TTM剔亏",
+   "list": "lixinger"
+  },
+  "全指消费": {
+   "algo": "中位TTM剔亏",
+   "list": "lixinger"
+  },
+  "全指信息": {
+   "algo": "中位TTM剔亏",
+   "list": "lixinger"
+  },
+  "中证环保": {
+   "algo": "中位TTM剔亏",
+   "list": "lixinger"
+  },
+  "中证军工": {
+   "algo": "中位TTM剔亏",
+   "list": "lixinger"
+  },
+  "食品饮料": {
+   "algo": "中位TTM剔亏",
+   "list": "sw"
+  },
+  "养老产业": {
+   "algo": "中位TTM剔亏",
+   "list": "lixinger"
+  },
+  "全市场": {
+   "algo": "中位TTM剔亏",
+   "list": "current"
+  },
+  "全市场加权": {
+   "algo": "等权整体法(调和)",
+   "list": "current",
+   "pe_cap": 200
+  },
+  "中证A500": {
+   "algo": "中位TTM剔亏",
+   "list": "lixinger"
+  },
+  "中证传媒": {
+   "algo": "中位TTM剔亏",
+   "list": "lixinger"
+  },
+  "证券公司": {
+   "algo": "中位TTM剔亏",
+   "list": "lixinger"
+  },
+  "中证银行": {
+   "algo": "中位TTM剔亏",
+   "list": "lixinger"
+  },
+  "中证白酒": {
+   "algo": "中位TTM剔亏",
+   "list": "lixinger"
+  },
+  "红利低波": {
+   "algo": "中位TTM剔亏",
+   "list": "lixinger"
+  },
+  "红利低波100": {
+   "algo": "中位TTM剔亏",
+   "list": "lixinger"
+  }
+ },
+ "note_agg": "2026-10-07 上证50/养老产业 由(截尾20%/截尾10%+pit)改中位TTM剔亏+lixinger: 2019独立集偏差 15.68%→7.07% / 11.54%→1.73%; E大原话口径为等权(见ed_agg_evidence)"
+}
