@@ -28,12 +28,15 @@ def sentiment():
         except (TypeError, ValueError, KeyError):
             pass
     rz_m = [{"m": f"{k[:4]}-{k[4:]}", "v": round(v / 1e12, 3)} for k, v in sorted(rz.items())]
-    # 北向: 当日净流入(百万元) → 月合计(亿)
+    # 北向: 当日净买入(百万元) → 月合计(亿)
+    # 注: 2024-08-18 起交易所停止披露北向每日净买入, 之后字段无意义 → 只用 ≤20240816
     h = _load("ts_hsgt.json") or []
     nm = {}
     for r in h:
         try:
-            d = str(r.get("trade_date")); v = float(r.get("north_money") or 0)
+            d = str(r.get("trade_date"))
+            if d > "20240816": continue
+            v = float(r.get("north_money") or 0)
             if v == v and abs(v) > 1e-9:
                 nm[d[:6]] = nm.get(d[:6], 0) + v / 100   # 百万→亿, 当月合计
         except (TypeError, ValueError): pass
