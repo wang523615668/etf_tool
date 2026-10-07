@@ -6,7 +6,7 @@
   <title>指数估值详情 · ETF 仪表盘</title>
   <!-- local echarts: avoid jsdelivr hang -->
   <script src="/static/vendor/echarts.min.js?v=5.5.1"></script>
-  <link rel="stylesheet" href="/static/style.css?v=20260725a" />
+  <link rel="stylesheet" href="/static/style.css?v=20261007b" />
   <style>
     .detail-toolbar {
       display: flex;
@@ -24,14 +24,14 @@
     }
     .detail-toolbar select,
     .detail-toolbar button {
-      background: #131c35;
-      color: #e8ecff;
-      border: 1px solid #2d3b63;
+      background: #ffffff;
+      color: #17233f;
+      border: 1px solid rgba(100,125,175,.35);
       border-radius: 10px;
       padding: 8px 12px;
     }
     .detail-toolbar a.back {
-      color: #69d2ff;
+      color: #2563eb;
       text-decoration: none;
     }
     .pb-only-banner {
@@ -39,9 +39,9 @@
       margin: 0 0 16px;
       padding: 12px 14px;
       border-radius: 12px;
-      background: rgba(245, 158, 11, 0.12);
-      border: 1px solid rgba(245, 158, 11, 0.45);
-      color: #ffd166;
+      background: rgba(192, 121, 26, 0.10);
+      border: 1px solid rgba(192, 121, 26, 0.40);
+      color: #7c5205;
     }
     .pb-only-banner.show { display: block; }
     .metric-row {
@@ -51,22 +51,22 @@
       margin-bottom: 18px;
     }
     .metric-card {
-      background: #111831;
-      border: 1px solid #26304f;
+      background: #ffffff;
+      border: 1px solid rgba(100,125,175,.28);
       border-radius: 14px;
       padding: 14px;
     }
-    .metric-card .label { color: #9aa6c7; font-size: 13px; }
+    .metric-card .label { color: #5b6b85; font-size: 13px; }
     .metric-card strong { display: block; margin-top: 6px; font-size: 20px; }
     .chart-panel {
-      background: #111831;
-      border: 1px solid #26304f;
+      background: #ffffff;
+      border: 1px solid rgba(100,125,175,.28);
       border-radius: 16px;
       padding: 14px;
       margin-bottom: 16px;
     }
     .chart-panel h3 { margin: 0 0 8px; font-size: 16px; }
-    .chart-panel .hint { color: #8fa0c5; font-size: 12px; margin: 0 0 10px; }
+    .chart-panel .hint { color: #5b6b85; font-size: 12px; margin: 0 0 10px; }
     .chart-box { width: 100%; height: 460px; }
     .chart-box.small { height: 280px; }
     .sub-tabs {
@@ -76,17 +76,17 @@
       margin: 0 0 12px;
     }
     .sub-tab {
-      background: #131c35;
-      color: #c9d4f0;
-      border: 1px solid #2d3b63;
+      background: #eef2fa;
+      color: #33415e;
+      border: 1px solid rgba(100,125,175,.3);
       border-radius: 999px;
       padding: 6px 12px;
       cursor: pointer;
     }
     .sub-tab.active {
-      background: rgba(105, 210, 255, 0.15);
-      border-color: #69d2ff;
-      color: #e8f7ff;
+      background: rgba(37, 99, 235, 0.12);
+      border-color: #2563eb;
+      color: #1e3a8a;
     }
     .knowledge-grid {
       display: grid;
@@ -95,8 +95,8 @@
       margin-bottom: 18px;
     }
     .knowledge-panel {
-      background: #111831;
-      border: 1px solid #26304f;
+      background: #ffffff;
+      border: 1px solid rgba(100,125,175,.28);
       border-radius: 16px;
       padding: 14px;
       min-height: 220px;
@@ -109,7 +109,7 @@
       gap: 8px;
       align-items: center;
     }
-    .knowledge-panel h3 span { color: #9aa6c7; font-size: 12px; font-weight: 500; }
+    .knowledge-panel h3 span { color: #5b6b85; font-size: 12px; font-weight: 500; }
     .article-list, .action-list {
       display: flex;
       flex-direction: column;
@@ -118,32 +118,32 @@
       overflow: auto;
     }
     .article-item, .action-item {
-      background: #0d1428;
-      border: 1px solid #243156;
+      background: #f4f7fc;
+      border: 1px solid rgba(100,125,175,.25);
       border-radius: 12px;
       padding: 10px 12px;
     }
     .article-item .meta, .action-item .meta {
-      color: #8fa0c5;
+      color: #5b6b85;
       font-size: 12px;
       margin-bottom: 4px;
     }
     .article-item a, .action-item a {
-      color: #9ad7ff;
+      color: #2563eb;
       text-decoration: none;
       font-weight: 600;
     }
     .article-item p, .action-item p {
       margin: 6px 0 0;
-      color: #b8c3e0;
+      color: #33415e;
       font-size: 13px;
       line-height: 1.45;
     }
-    .tag-buy { color: #18c37e; }
-    .tag-sell { color: #ff6b6b; }
-    .tag-hold { color: #f59e0b; }
-    .tag-watch { color: #69d2ff; }
-    .empty-hint { color: #8fa0c5; font-size: 13px; }
+    .tag-buy { color: #0a9d58; }
+    .tag-sell { color: #d92f2f; }
+    .tag-hold { color: #c0791a; }
+    .tag-watch { color: #2563eb; }
+    .empty-hint { color: #5b6b85; font-size: 13px; }
     @media (max-width: 1000px) {
       .metric-row { grid-template-columns: repeat(3, minmax(0, 1fr)); }
       .knowledge-grid { grid-template-columns: 1fr; }
@@ -161,6 +161,7 @@
     <a href="/#calibration">规则校准池</a>
     <a href="/#topics">主题知识库</a>
     <a href="/index-detail?t=20260723d" style="border-top:1px solid #2d3148;margin-top:8px;padding-top:8px;color:#f59e0b">📊 指数估值详情</a>
+    <a href="/self-calc" style="color:#f59e0b">🧮 自算估值</a>
     <a href="/self-calib" style="color:#f59e0b">🎯 估值口径标定总览</a>
   </aside>
   <main class="main">
@@ -205,7 +206,7 @@
     </section>
 
     <section class="chart-panel" id="selfCalcPanel" style="display:none">
-      <h3>自算估值（独立引擎 · 剔亏损·成分中位） <span class="meta" id="selfCalcMeta" style="font-size:12px;color:#8fa0c5"></span></h3>
+      <h3>自算估值（独立引擎 · 剔亏损·成分中位） <span class="meta" id="selfCalcMeta" style="font-size:12px;color:#5b6b85"></span></h3>
       <p class="hint">全A快照(东财PE-TTM/PB-MRQ)×成分股·剔亏损·取中位数；与理杏仁/且慢独立，用于交叉验证。分位窗口2018起。</p>
       <div id="selfCalcBody" class="metric-row"></div>
     </section>
@@ -306,13 +307,13 @@
         backgroundColor: 'transparent',
         grid: { left: 48, right: 18, top: 36, bottom: 48 },
         tooltip: { trigger: 'axis' },
-        legend: extras ? { data: [title, ...(extras.ma850 ? ['MA850'] : []), ...(extras.ma250 ? ['MA250'] : [])], textStyle: { color: '#c9d4f0' }, top: 4 } : undefined,
+        legend: extras ? { data: [title, ...(extras.ma850 ? ['MA850'] : []), ...(extras.ma250 ? ['MA250'] : [])], textStyle: { color: '#5b6b85' }, top: 4 } : undefined,
         dataZoom: [
           { type: 'inside', xAxisIndex: 0 },
-          { type: 'slider', height: 18, bottom: 8, borderColor: '#2d3b63', fillerColor: 'rgba(105,210,255,0.12)' },
+          { type: 'slider', height: 18, bottom: 8, borderColor: '#c6d2e4', fillerColor: 'rgba(37,99,235,0.10)' },
         ],
-        xAxis: { type: 'category', data: dates, axisLabel: { color: '#9aa6c7' }, axisLine: { lineStyle: { color: '#2d3b63' } } },
-        yAxis: { type: 'value', scale: true, axisLabel: { color: '#9aa6c7' }, splitLine: { lineStyle: { color: '#1b2544' } } },
+        xAxis: { type: 'category', data: dates, axisLabel: { color: '#5b6b85' }, axisLine: { lineStyle: { color: '#c6d2e4' } } },
+        yAxis: { type: 'value', scale: true, axisLabel: { color: '#5b6b85' }, splitLine: { lineStyle: { color: 'rgba(100,125,175,.18)' } } },
         series,
       };
     }
@@ -378,7 +379,7 @@
         animation: false,
         legend: {
           data: ['点位', 'PE', 'PB', 'MA850', 'MA250'],
-          textStyle: { color: '#c9d4f0' },
+          textStyle: { color: '#5b6b85' },
           top: 4,
         },
         tooltip: {
@@ -388,7 +389,7 @@
         axisPointer: { link: [{ xAxisIndex: 'all' }] },
         dataZoom: [
           { type: 'inside', xAxisIndex: [0, 1, 2] },
-          { type: 'slider', xAxisIndex: [0, 1, 2], height: 18, bottom: 8, borderColor: '#2d3b63', fillerColor: 'rgba(105,210,255,0.12)' },
+          { type: 'slider', xAxisIndex: [0, 1, 2], height: 18, bottom: 8, borderColor: '#c6d2e4', fillerColor: 'rgba(37,99,235,0.10)' },
         ],
         grid: [
           { left: 52, right: 24, top: 42, height: '28%' },
@@ -396,19 +397,19 @@
           { left: 52, right: 24, top: '66%', height: '18%' },
         ],
         xAxis: [
-          { type: 'category', data: dates, gridIndex: 0, axisLabel: { show: false }, axisLine: { lineStyle: { color: '#2d3b63' } } },
-          { type: 'category', data: dates, gridIndex: 1, axisLabel: { show: false }, axisLine: { lineStyle: { color: '#2d3b63' } } },
-          { type: 'category', data: dates, gridIndex: 2, axisLabel: { color: '#9aa6c7' }, axisLine: { lineStyle: { color: '#2d3b63' } } },
+          { type: 'category', data: dates, gridIndex: 0, axisLabel: { show: false }, axisLine: { lineStyle: { color: '#c6d2e4' } } },
+          { type: 'category', data: dates, gridIndex: 1, axisLabel: { show: false }, axisLine: { lineStyle: { color: '#c6d2e4' } } },
+          { type: 'category', data: dates, gridIndex: 2, axisLabel: { color: '#5b6b85' }, axisLine: { lineStyle: { color: '#c6d2e4' } } },
         ],
         yAxis: [
-          { type: 'value', gridIndex: 0, scale: true, name: '点位', nameTextStyle: { color: '#ffd166' }, axisLabel: { color: '#9aa6c7' }, splitLine: { lineStyle: { color: '#1b2544' } } },
-          { type: 'value', gridIndex: 1, scale: true, name: 'PE', nameTextStyle: { color: '#69d2ff' }, axisLabel: { color: '#9aa6c7' }, splitLine: { lineStyle: { color: '#1b2544' } } },
-          { type: 'value', gridIndex: 2, scale: true, name: 'PB', nameTextStyle: { color: '#18c37e' }, axisLabel: { color: '#9aa6c7' }, splitLine: { lineStyle: { color: '#1b2544' } } },
+          { type: 'value', gridIndex: 0, scale: true, name: '点位', nameTextStyle: { color: '#b8860b' }, axisLabel: { color: '#5b6b85' }, splitLine: { lineStyle: { color: 'rgba(100,125,175,.18)' } } },
+          { type: 'value', gridIndex: 1, scale: true, name: 'PE', nameTextStyle: { color: '#2563eb' }, axisLabel: { color: '#5b6b85' }, splitLine: { lineStyle: { color: 'rgba(100,125,175,.18)' } } },
+          { type: 'value', gridIndex: 2, scale: true, name: 'PB', nameTextStyle: { color: '#18c37e' }, axisLabel: { color: '#5b6b85' }, splitLine: { lineStyle: { color: 'rgba(100,125,175,.18)' } } },
         ],
         series: [
           {
             name: '点位', type: 'line', xAxisIndex: 0, yAxisIndex: 0, showSymbol: false,
-            data: cp, lineStyle: { width: 2, color: '#ffd166' }, itemStyle: { color: '#ffd166' },
+            data: cp, lineStyle: { width: 2, color: '#b8860b' }, itemStyle: { color: '#b8860b' },
             areaStyle: { color: 'rgba(255,209,102,0.10)' },
             markPoint: marks.length ? {
               symbol: 'circle',
@@ -419,7 +420,7 @@
           },
           {
             name: 'PE', type: 'line', xAxisIndex: 1, yAxisIndex: 1, showSymbol: false,
-            data: pe, lineStyle: { width: 2, color: '#69d2ff' }, itemStyle: { color: '#69d2ff' },
+            data: pe, lineStyle: { width: 2, color: '#2563eb' }, itemStyle: { color: '#2563eb' },
             areaStyle: { color: 'rgba(105,210,255,0.08)' },
           },
           {
@@ -455,10 +456,10 @@
       const peD = md.pe || {};
       const pbD = md.pb || {};
       const peLine = peD.dev_pct != null
-        ? `${fmtDev(peD.dev_pct)} <span style="color:#8fa0c5;font-size:12px">极值 ${fmtDev(peD.hist_min_pct)} ~ ${fmtDev(peD.hist_max_pct)}</span>`
+        ? `${fmtDev(peD.dev_pct)} <span style="color:#5b6b85;font-size:12px">极值 ${fmtDev(peD.hist_min_pct)} ~ ${fmtDev(peD.hist_max_pct)}</span>`
         : '—';
       const pbLine = pbD.dev_pct != null
-        ? `${fmtDev(pbD.dev_pct)} <span style="color:#8fa0c5;font-size:12px">极值 ${fmtDev(pbD.hist_min_pct)} ~ ${fmtDev(pbD.hist_max_pct)}</span>`
+        ? `${fmtDev(pbD.dev_pct)} <span style="color:#5b6b85;font-size:12px">极值 ${fmtDev(pbD.hist_min_pct)} ~ ${fmtDev(pbD.hist_max_pct)}</span>`
         : '—';
       const interest = md.interest_score != null
         ? `${md.interest_score} · ${esc(md.interest_level || '')}`
@@ -497,7 +498,7 @@
         <div class="metric-card"><div class="label">偏离兴趣区(本指数)</div><strong>${interest}</strong><div class="label" style="margin-top:6px">${esc(md.interest_note || '相对本指数历史正/负偏离极值')}</div></div>
         <div class="metric-card"><div class="label">点位</div><strong>${num(latest.cp, 2)}</strong></div>
         <div class="metric-card"><div class="label">双均线低估信号</div>${daHtml}</div>
-        <div class="metric-card"><div class="label">850线 / 250年线</div><strong>${cp850Line}<span style="color:#8fa0c5;font-size:12px"> / ${cp250Line}</span></strong><div class="label" style="margin-top:4px">${techHtml}</div></div>
+        <div class="metric-card"><div class="label">850线 / 250年线</div><strong>${cp850Line}<span style="color:#5b6b85;font-size:12px"> / ${cp250Line}</span></strong><div class="label" style="margin-top:4px">${techHtml}</div></div>
         <div class="metric-card" style="grid-column:span 2"><div class="label">综合信号（分位+均线+技术+兴趣）</div><div>${compHtml}</div></div>
         <div class="metric-card"><div class="label">相关文章</div><strong>${detail.article_count || (detail.articles || []).length || 0}</strong></div>
         <div class="metric-card"><div class="label">长赢150买卖</div><strong class="tag-buy">${detail.buy_count || 0}买</strong><span style="color:#8fa0c5"> / </span><strong class="tag-sell">${detail.sell_count || 0}卖</strong><div class="label" style="margin-top:6px">图上可见 ${vis} 点${out ? ` · 窗外 ${out}` : ''}</div></div>`;

@@ -954,6 +954,47 @@ def self_calib_page() -> str:
         return "<h1>self calib page missing</h1>"
     return page.read_text(encoding="utf-8")
 
+
+@app.get("/self-calc", response_class=HTMLResponse)
+def self_calc_page() -> str:
+    """自算估值: 左列指数 → 右侧逐股明细/历史/分位（任意交易日 + 任意年限）。"""
+    page = STATIC / "self_calc.html"
+    if not page.exists():
+        return "<h1>self calc page missing</h1>"
+    return page.read_text(encoding="utf-8")
+
+
+async def _run_calc(fn):
+    """估值重计算(逐日快照最大~30MB)丢线程池，不阻塞事件循环。"""
+    import asyncio
+    return await asyncio.to_thread(fn)
+
+
+@app.get("/api/self-calc/index")
+async def api_self_calc_index():
+    from app import ed_calc
+    items = await _run_calc(ed_calc.series_index)
+    tds = await _run_calc(ed_calc.trade_dates)
+    return {"generated_max": tds[-1] if tds else None,
+            "generated_min": tds[0] if tds else None,
+            "days": len(tds), "items": items}
+
+
+@app.get("/api/self-calc/history")
+async def api_self_calc_history(code: str, years: float = 5, date: str | None = None):
+    from app import ed_calc
+    return await _run_calc(lambda: ed_calc.history(code, years=years, upto=date))
+
+
+@app.get("/api/self-calc/detail")
+async def api_self_calc_detail(code: str, date: str, sort: str = "code", years: float = 5):
+    from app import ed_calc
+    try:
+        return await _run_calc(lambda: ed_calc.detail(code, date, sort=sort, years=years))
+    except Exception as e:
+        return {"error": f"计算失败: {e}"}
+
+
 @app.get("/api/summary")
 def api_summary() -> dict[str, Any]:
     long_win = load_json("long_win_positions.json")

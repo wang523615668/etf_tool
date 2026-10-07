@@ -47,6 +47,19 @@ def _lix():
         _LIX = _load(f"{DATA}/ed_cons_lixinger.json", {})
     return _LIX
 
+_MX = None
+def _mx():
+    """妙想(东财)历史时点成分表 {文件名键:{日期:[[代码,权重],…]}}"""
+    global _MX
+    if _MX is None:
+        _MX = {}
+        for fn, k in (("mx_cons_000807.json", "食品饮料"),
+                       ("mx_cons_801120.json", "食品饮料·申万"),
+                       ("mx_alla_asof.json", "全市场·按期")):
+            j = _load(f"{DATA}/{fn}", {})
+            _MX[k] = {d: v for d, v in j.items() if v}
+    return _MX
+
 def load_config():
     j = _load(f"{DATA}/ed_perindex_best.json", {})
     out = {}
@@ -181,6 +194,13 @@ def pool(name, snap, ctx, mode="current"):
         return list(snap.values())
     if name == "全市场·主板(E大口径)":
         return [r for c, r in snap.items() if c.startswith(("60", "00"))]
+    if mode in ("mx", "mx807", "mx801120"):
+        # 妙想(东财)历史时点成分(按月, 取不晚于当日的最近一期; mx807=中证000807, mx801120=申万)
+        key = "食品饮料" if mode == "mx807" else "食品饮料·申万"
+        j = (_mx().get(key) or {})
+        ds = [d for d in j if d <= ctx.date]
+        if not ds: return []
+        return [snap[r[0]] for r in j[max(ds)] if r[0] in snap]
     if mode in ("sw", "sw_pit"):
         # 申万行业成分(E大估值表的行业列, 如"食品饮料"=申万801120的122只, 非中证细分000815)
         j = _sw().get(name) or []

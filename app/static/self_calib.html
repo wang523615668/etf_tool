@@ -4,26 +4,26 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>估值口径标定总览 · ETF 仪表盘</title>
-  <link rel="stylesheet" href="/static/style.css?v=20260725a" />
+  <link rel="stylesheet" href="/static/style.css?v=20261007b" />
   <style>
-    body { background:#0a0f1e; color:#e8ecff; font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif; margin:0; padding:18px; }
+    body { background:#f3f6fc; color:#17233f; font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif; margin:0; padding:18px; }
     .wrap { max-width:1180px; margin:0 auto; }
     h1 { font-size:22px; margin:0 0 6px; }
-    .sub { color:#9aa6c7; font-size:14px; line-height:1.8; margin-bottom:14px; }
-    .sub b { color:#69d2ff; }
+    .sub { color:#5b6b85; font-size:14px; line-height:1.8; margin-bottom:14px; }
+    .sub b { color:#2563eb; }
     .cards { display:grid; grid-template-columns:repeat(auto-fit,minmax(190px,1fr)); gap:12px; margin-bottom:18px; }
-    .metric-card { background:#111831; border:1px solid #26304f; border-radius:14px; padding:14px; }
-    .metric-card .label { color:#9aa6c7; font-size:13px; }
+    .metric-card { background:#ffffff; border:1px solid rgba(100,125,175,.28); border-radius:14px; padding:14px; }
+    .metric-card .label { color:#5b6b85; font-size:13px; }
     .metric-card strong { display:block; margin-top:6px; font-size:20px; }
     table { width:100%; border-collapse:collapse; font-size:13.5px; }
-    th,td { padding:9px 8px; border-bottom:1px solid #1e2740; text-align:right; white-space:nowrap; }
+    th,td { padding:9px 8px; border-bottom:1px solid rgba(100,125,175,.22); text-align:right; white-space:nowrap; }
     th:first-child,td:first-child { text-align:left; }
-    th { color:#9aa6c7; font-weight:600; position:sticky; top:0; background:#0a0f1e; }
-    tr:hover td { background:#111831; }
-    .ok { color:#4ade80; } .warn { color:#ffd166; } .bad { color:#f87171; }
-    .pill { display:inline-block; padding:1px 7px; border-radius:8px; background:#1b2540; color:#9aa6c7; font-size:12px; margin-left:4px; }
-    a.back { color:#69d2ff; text-decoration:none; font-size:14px; }
-    .anchors { color:#9aa6c7; font-size:12px; line-height:1.6; white-space:normal; }
+    th { color:#45577a; font-weight:600; position:sticky; top:0; background:#eef2fa; }
+    tr:hover td { background:#eef2fa; }
+    .ok { color:#0a9d58; } .warn { color:#b8860b; } .bad { color:#d92f2f; }
+    .pill { display:inline-block; padding:1px 7px; border-radius:8px; background:#e7edf8; color:#45577a; font-size:12px; margin-left:4px; }
+    a.back { color:#2563eb; text-decoration:none; font-size:14px; }
+    .anchors { color:#5b6b85; font-size:12px; line-height:1.6; white-space:normal; }
     @media (max-width:700px){
       table { font-size:12.5px; } th,td { padding:7px 5px; }
       .hide-sm { display:none; }
@@ -85,7 +85,7 @@ async function main(){
       <td>${KC(x.n_hist)}</td>
       <td class="${cls(x.anchor,6,10)}">${KC(x.anchor)}%</td>
       <td>${KC(x.n_anch)}</td>
-      <td style="text-align:left;color:#9aa6c7">${yr}</td>
+      <td style="text-align:left;color:#5b6b85">${yr}</td>
       <td class="hide-sm">${KC(p5)}%</td>
       <td class="hide-sm">${rng}</td>
     </tr>`;

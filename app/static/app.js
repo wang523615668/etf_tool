@@ -154,7 +154,7 @@ function renderMarketPosition(mp) {
   }
   cards.innerHTML = `
     <div class="decision-card"><div class="label">10年综合分位</div><strong>${avg}</strong><div class="muted">PE ${peP} / PB ${pbP}</div></div>
-    <div class="decision-card"><div class="label">目标总仓位</div><strong style="color:#60a5fa">${tgt}</strong><div class="muted">= 1 − 分位</div></div>
+    <div class="decision-card"><div class="label">目标总仓位</div><strong style="color:#2563eb">${tgt}</strong><div class="muted">= 1 − 分位</div></div>
     <div class="decision-card ${mp.over_target ? 'stale' : ''}"><div class="label">当前总仓</div><strong>${cur}</strong><div class="muted">持仓市值/本金</div></div>
     <div class="decision-card"><div class="label">总仓余量</div><strong>${headSh} 份</strong><div class="muted">约 ${headRmb} 元</div></div>
     <div class="decision-card"><div class="label">目标金额/份</div><strong>${money(mp.target_rmb)}</strong><div class="muted">${mp.target_shares != null ? Number(mp.target_shares).toFixed(1) : '—'} / 150 份</div></div>
@@ -268,7 +268,7 @@ async function renderSunburst(plan = 'long_win_150') {
       data: data.children,
       radius: [0, '95%'],
       sort: null,
-      label: { color: '#e8ecff', fontSize: 12 },
+      label: { color: '#33415e', fontSize: 12 },
       levels: [
         {},
         { r0: '15%', r: '45%', itemStyle: { borderWidth: 2 }, label: { rotate: 'tangential' } },

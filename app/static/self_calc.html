@@ -1,0 +1,259 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#f3f6fc" />
+  <title>自算估值 · ETF 投资仪表盘</title>
+  <link rel="manifest" href="/static/manifest.json" />
+  <link rel="stylesheet" href="/static/style.css?v=20261007b" />
+  <script src="/static/vendor/echarts.min.js?v=5.5.1-slim" defer></script>
+  <style>
+    .sc-layout { display: grid; grid-template-columns: 236px minmax(0, 1fr); gap: 20px; align-items: start; }
+    .sc-side { position: sticky; top: 14px; max-height: calc(100vh - 34px); overflow: auto;
+      background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius);
+      box-shadow: var(--shadow); padding: 12px 10px; }
+    .sc-side .grp { color: var(--muted); font-size: 11.5px; letter-spacing: 1.5px; margin: 10px 8px 5px; }
+    .sc-item { display: flex; justify-content: space-between; align-items: center; gap: 8px;
+      padding: 8px 10px; border-radius: 10px; cursor: pointer; border: 1px solid transparent;
+      font-size: 14px; transition: all .12s; }
+    .sc-item:hover { background: rgba(37,99,235,.06); }
+    .sc-item.on { background: linear-gradient(90deg, rgba(37,99,235,.12), rgba(124,92,224,.08));
+      border-color: rgba(37,99,235,.35); font-weight: 700; }
+    .sc-item .pe { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+    .sc-item .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+    .sc-ctl { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; margin-bottom: 14px; }
+    .sc-ctl label { display: flex; flex-direction: column; gap: 4px; color: var(--muted); font-size: 12px; }
+    .sc-ctl input[type=date], .sc-ctl select { background: #fff; color: var(--text);
+      border: 1px solid var(--line); border-radius: 11px; padding: 8px 12px; font-size: 14px; }
+    .sc-ctl .quick { display: flex; gap: 6px; flex-wrap: wrap; }
+    .sc-stat-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin: 4px 0 14px; }
+    .sc-stat { background: var(--panel2); border: 1px solid var(--border); border-radius: 14px; padding: 12px 14px; }
+    .sc-stat b { font-size: 21px; display: block; font-variant-numeric: tabular-nums; }
+    .sc-stat span { color: var(--muted); font-size: 12px; }
+    .sc-bar { height: 8px; border-radius: 999px; overflow: hidden; margin-top: 8px;
+      background: linear-gradient(90deg, #0a9d58 0%, #c9c94f 30%, #e0a23c 55%, #d92f2f 78%, #8f1717 100%); position: relative; }
+    .sc-bar i { position: absolute; top: -3px; width: 3px; height: 14px; background: #17233f; border-radius: 2px; }
+    #scChart { height: 330px; }
+    .sc-table-wrap { max-height: 560px; overflow: auto; }
+    .sc-table-wrap th { position: sticky; top: 0; z-index: 2; }
+    tr.loss td { color: #9aa7bd; }
+    td.num { font-variant-numeric: tabular-nums; text-align: right; }
+    th.num { text-align: right; }
+    .sc-note { color: var(--muted); font-size: 12.5px; line-height: 1.6; }
+    .sc-head-flex { display: flex; justify-content: space-between; align-items: flex-start; gap: 14px; flex-wrap: wrap; }
+    @media (max-width: 900px) {
+      .sc-layout { grid-template-columns: 1fr; }
+      .sc-side { position: static; max-height: none; display: flex; flex-wrap: nowrap; overflow-x: auto; gap: 6px; padding: 8px; }
+      .sc-side .grp { display: none; }
+      .sc-item { flex-shrink: 0; border: 1px solid var(--border); border-radius: 999px; }
+    }
+  </style>
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="brand">ETF 投资仪表盘</div>
+    <div class="brand-sub">纪律 · 估值 · 自主决策</div>
+    <div class="nav-group">核心</div>
+    <a href="/#overview"><span class="ico">🏠</span>首页总览</a>
+    <a href="/#valuation"><span class="ico">🌡️</span>估值温度计</a>
+    <a href="/self-calc" class="active"><span class="ico">🧮</span>自算估值</a>
+    <a href="/self-calib"><span class="ico">📐</span>口径标定</a>
+    <a href="/#actionSheet"><span class="ico">⚡</span>今日动作单</a>
+    <a href="/index-detail"><span class="ico">🔍</span>指数详情</a>
+  </aside>
+
+  <main class="main">
+    <div class="hero" style="padding:22px 28px">
+      <div><h1>🧮 <em>自算估值</em></h1>
+        <p>本地逐股历史快照（2005-01-04 至今，5282 个交易日）按 E大口径重算：逐指数最优「算法 × 名单源」组合，均值对 E大表偏差 5.7%。可选任意交易日、任意年限分位。</p></div>
+    </div>
+
+    <section class="panel">
+      <div class="sc-layout">
+        <nav class="sc-side" id="scList"><div class="muted" style="padding:14px">指数载入中…</div></nav>
+
+        <div>
+          <div class="sc-ctl">
+            <label>估值日期
+              <input type="date" id="scDate">
+            </label>
+            <div class="quick">
+              <button class="btn-mini" data-d="today">最新</button>
+              <button class="btn-mini" data-d="2024-09-18">2024-09底</button>
+              <button class="btn-mini" data-d="2024-02-05">2024-02坑</button>
+              <button class="btn-mini" data-d="2021-02-18">2021-02顶</button>
+              <button class="btn-mini" data-d="2019-01-31">2019-01底</button>
+              <button class="btn-mini" data-d="2018-10-19">2018-10底</button>
+              <button class="btn-mini" data-d="2015-06-12">2015-06顶</button>
+              <button class="btn-mini" data-d="2008-11-04">2008-11底</button>
+            </div>
+            <label>分位年限
+              <select id="scYears">
+                <option value="3">近 3 年</option>
+                <option value="5" selected>近 5 年</option>
+                <option value="7">近 7 年</option>
+                <option value="10">近 10 年</option>
+                <option value="15">近 15 年</option>
+                <option value="25">全部历史</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="sc-stat-row" id="scStats"></div>
+          <div class="sc-note" id="scMethod"></div>
+
+          <div class="panel-head" style="margin-top:18px"><h2>历史走势</h2></div>
+          <div id="scChart"></div>
+
+          <div class="panel-head" style="margin-top:22px">
+            <h2>成分股明细</h2>
+            <select id="scSort">
+              <option value="code">按代码</option>
+              <option value="mktcap">按市值</option>
+              <option value="pe">按 PE（低→高）</option>
+              <option value="pe_desc">按 PE（高→低）</option>
+              <option value="pb">按 PB</option>
+            </select>
+          </div>
+          <div class="sc-note" id="scAgg" style="margin-bottom:10px"></div>
+          <div class="table-wrap sc-table-wrap">
+            <table>
+              <thead><tr><th>代码</th><th>名称</th><th class="num">PE(TTM)</th><th class="num">静态PE</th><th class="num">PB</th><th class="num">总市值(亿)</th><th class="num">权重%</th></tr></thead>
+              <tbody id="scTbody"><tr><td colspan="7" class="muted">加载中…</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+<script>
+const $ = s => document.querySelector(s);
+let CODE = null, chart = null;
+
+async function j(u) { const r = await fetch(u, {cache:'no-store'}); if (!r.ok) throw new Error(r.status); return r.json(); }
+const fmt = v => (v === null || v === undefined) ? '-' : v;
+function zoneOf(p) {
+  if (p === null || p === undefined) return {c:'#8a97b5', t:'样本不足'};
+  if (p < 10) return {c:'#0a9d58', t:'💎 钻石底'};
+  if (p < 20) return {c:'#22b45f', t:'🥇 黄金底'};
+  if (p < 35) return {c:'#6fbe44', t:'🏦 低估区'};
+  if (p < 55) return {c:'#c9c94f', t:'⚪ 中性区'};
+  if (p < 70) return {c:'#e0a23c', t:'🟡 偏高区'};
+  if (p < 85) return {c:'#d92f2f', t:'⛰️ 高估区'};
+  return {c:'#8f1717', t:'🚀 极高估'};
+}
+
+async function loadList() {
+  const d = await j('/api/self-calc/index');
+  const box = $('#scList');
+  let html = '', lastGrp = '';
+  d.items.forEach(x => {
+    if (x.group !== lastGrp) { html += `<div class="grp">${x.group}</div>`; lastGrp = x.group; }
+    html += `<div class="sc-item" data-code="${x.code}">
+      <span>${x.name}</span><span class="pe" id="sp-${x.code}">${fmt(x.pe)}</span></div>`;
+  });
+  box.innerHTML = html;
+  box.querySelectorAll('.sc-item').forEach(el =>
+    el.addEventListener('click', () => select(el.dataset.code)));
+  select(localStorage.getItem('sc_code') || (d.items[0] && d.items[0].code));
+}
+
+function setDot(code, p) {
+  const el = document.getElementById('sp-' + code);
+  if (el) el.style.color = zoneOf(p).c;
+}
+
+async function select(code) {
+  CODE = code;
+  localStorage.setItem('sc_code', code);
+  document.querySelectorAll('.sc-item').forEach(el => el.classList.toggle('on', el.dataset.code === code));
+  const years = $('#scYears').value;
+  const date = $('#scDate').value || '9999-12-31';
+  const h = await j(`/api/self-calc/history?code=${code}&years=${years}&date=${date}`);
+  if (h.error) { $('#scStats').innerHTML = `<div class="muted">${h.error}</div>`; return; }
+  const z = zoneOf(h.pe_pct);
+  setDot(code, h.pe_pct);
+  $('#scStats').innerHTML = `
+    <div class="sc-stat"><b style="color:${z.c}">${fmt(h.pe)}</b><span>PE · ${h.end}</span>
+      <div class="sc-bar"><i style="left:calc(${h.pe_pct ?? 0}% - 1.5px)"></i></div>
+      <span>PE ${years}年分位 <b style="font-size:13px;color:${z.c}">${fmt(h.pe_pct)}%</b> · ${z.t}</span></div>
+    <div class="sc-stat"><b>${fmt(h.pb)}</b><span>PB(MRQ)</span>
+      <div class="sc-bar"><i style="left:calc(${h.pb_pct ?? 0}% - 1.5px)"></i></div>
+      <span>PB ${years}年分位 <b style="font-size:13px">${fmt(h.pb_pct)}%</b></span></div>
+    <div class="sc-stat"><b>${fmt(h.n)}</b><span>剔亏后样本数</span></div>
+    <div class="sc-stat"><b>${fmt(h.pe_min)} ~ ${fmt(h.pe_max)}</b><span>窗口内 PE 区间</span>
+      <span>均值 ${fmt(h.pe_avg)} · ${h.win_days} 天</span></div>`;
+  $('#scMethod').textContent =
+    `口径：${h.algo} · ${h.list_mode}${h.note ? ' · ' + h.note : ''}` +
+    (h.pe_pct !== null && h.pb_pct !== null && Math.abs(h.pe_pct - h.pb_pct) >= 15
+      ? ` · ⚠️ PE/PB 分位背离 ${Math.abs(h.pe_pct - h.pb_pct).toFixed(1)}pt（ROE 中枢下移会抬高 PE 分位，属常态）` : '');
+  drawChart(h);
+  await loadDetail();
+}
+
+function drawChart(h) {
+  const el = $('#scChart');
+  if (typeof echarts === 'undefined') { el.innerHTML = '<div class="muted">图表库未加载</div>'; return; }
+  chart = chart || echarts.init(el);
+  chart.setOption({
+    backgroundColor: 'transparent',
+    tooltip: { trigger: 'axis' },
+    legend: { data: ['PE(TTM)', 'PB'], textStyle: { color: '#5b6b85' }, top: 0 },
+    grid: { left: 44, right: 46, top: 30, bottom: 46 },
+    xAxis: { type: 'category', data: h.series.map(p => p.d),
+      axisLabel: { color: '#5b6b85' }, axisLine: { lineStyle: { color: '#c6d2e4' } } },
+    dataZoom: [{ type: 'slider', height: 16, bottom: 6, borderColor: '#c6d2e4' }],
+    yAxis: [
+      { type: 'value', name: 'PE', axisLabel: { color: '#5b6b85' }, splitLine: { lineStyle: { color: 'rgba(100,125,175,.15)' } } },
+      { type: 'value', name: 'PB', axisLabel: { color: '#5b6b85' }, splitLine: { show: false } },
+    ],
+    series: [
+      { name: 'PE(TTM)', type: 'line', data: h.series.map(p => p.pe), showSymbol: false,
+        lineStyle: { color: '#2563eb', width: 1.6 }, areaStyle: { color: 'rgba(37,99,235,.07)' } },
+      { name: 'PB', type: 'line', yAxisIndex: 1, data: h.series.map(p => p.pb), showSymbol: false,
+        lineStyle: { color: '#7c5ce0', width: 1.4, type: 'dashed' } },
+    ],
+  }, { notMerge: true });
+  chart.resize();
+}
+
+async function loadDetail() {
+  if (!CODE) return;
+  const date = $('#scDate').value || '9999-12-31';
+  const sort = $('#scSort').value;
+  const years = $('#scYears').value;
+  const d = await j(`/api/self-calc/detail?code=${CODE}&date=${date}&sort=${sort}&years=${years}`);
+  if (d.error) { $('#scTbody').innerHTML = `<tr><td colspan="7" class="muted">${d.error}</td></tr>`; $('#scAgg').innerHTML = ''; return; }
+  $('#scAgg').innerHTML =
+    `当日(${d.date})成分 <b>${d.total}</b> 只 · 正PE ${d.n_pe} · 亏损剔除 ${d.n_loss} ｜ ` +
+    `本引擎按「${d.algo_cn} × ${d.list_cn}${d.pit ? '' : '·当期名单'}」复算 PE=<b>${fmt(d.pe)}</b>（序列官方值 ${fmt(d.seq_pe ?? d.pe)}，交叉校验 ${fmt(d.agg_pe_check)}）· PB=<b>${fmt(d.pb)}</b>` +
+    (d.median_pe ? ` ｜ 全成分中位PE ${d.median_pe} / 均值 ${d.mean_pe} / 中位PB ${d.median_pb}` : '') +
+    (d.sort_note ? `<br><span style="color:#c0791a">⚠️ ${d.sort_note}</span>` : '');
+  $('#scTbody').innerHTML = d.items.map(x =>
+    `<tr class="${x.loss ? 'loss' : ''}"><td>${x.code}</td><td>${x.name}</td>` +
+    `<td class="num">${x.loss ? '亏损' : fmt(x.pe)}</td><td class="num">${fmt(x.pe_lar)}</td>` +
+    `<td class="num">${fmt(x.pb)}</td><td class="num">${fmt(x.mktcap_yi)}</td><td class="num">${fmt(x.weight_pct)}</td></tr>`).join('');
+}
+
+$('#scSort').addEventListener('change', loadDetail);
+$('#scDate').addEventListener('change', () => select(CODE));
+$('#scYears').addEventListener('change', () => select(CODE));
+document.querySelectorAll('.quick .btn-mini').forEach(b => b.addEventListener('click', async () => {
+  const v = b.dataset.d;
+  if (v === 'today') { $('#scDate').value = ''; }
+  else $('#scDate').value = v;
+  await select(CODE);
+}));
+window.addEventListener('resize', () => chart && chart.resize());
+(async () => {
+  try {
+    const s = await j('/api/self-calc/index');
+    if (s.generated_max) $('#scDate').max = s.generated_max;
+  } catch (e) {}
+  await loadList();
+})();
+</script>
+</body>
+</html>
