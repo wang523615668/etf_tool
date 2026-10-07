@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#f3f6fc" />
+  <title>门票股 · ETF 投资仪表盘</title>
+  <link rel="manifest" href="/static/manifest.json" />
+  <link rel="stylesheet" href="/static/style.css?v=20261007b" />
+  <style>
+    .mp-rule { background: var(--panel2); border: 1px solid var(--border); border-left: 3px solid #2563eb;
+      border-radius: 12px; padding: 12px 16px; margin-bottom: 14px; font-size: 13.5px; line-height: 1.75; }
+    .mp-rule b { color: #1d4ed8; }
+    .mp-rule .src { color: var(--muted); font-size: 12px; }
+    .mp-tabs { display: flex; gap: 8px; flex-wrap: wrap; margin: 6px 0 14px; }
+    .mp-tab { padding: 8px 16px; border-radius: 999px; border: 1px solid var(--border); background: var(--panel2);
+      color: var(--text); font-size: 13.5px; cursor: pointer; transition: all .12s; }
+    .mp-tab:hover { border-color: rgba(37,99,235,.45); }
+    .mp-tab.on { background: linear-gradient(90deg, #2563eb, #7c5ce0); color: #fff; border-color: transparent; font-weight: 700; }
+    .mp-wrap { overflow: auto; max-height: 620px; }
+    .mp-wrap th { position: sticky; top: 0; z-index: 2; }
+    td.num, th.num { font-variant-numeric: tabular-nums; text-align: right; }
+    .mk { display: inline-block; min-width: 24px; padding: 1px 6px; border-radius: 6px; font-size: 11.5px; font-weight: 700; }
+    .mk.SH { background: rgba(217,47,47,.12); color: #b91c1c; }
+    .mk.SZ { background: rgba(37,99,235,.12); color: #1d4ed8; }
+    .tag { display: inline-block; padding: 1px 7px; border-radius: 6px; font-size: 11.5px; margin-right: 4px; }
+    .tag.b { background: rgba(10,157,88,.14); color: #0a7a45; }
+    .tag.a { background: rgba(37,99,235,.12); color: #1d4ed8; }
+    .tag.w { background: rgba(224,162,60,.18); color: #a16207; }
+    .mp-dist { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 10px; }
+    .mp-chip { background: var(--panel2); border: 1px solid var(--border); border-radius: 10px;
+      padding: 6px 12px; font-size: 13px; }
+    .mp-chip b { color: #1d4ed8; }
+    .mp-note { color: var(--muted); font-size: 12.5px; line-height: 1.7; }
+    .hide { display: none; }
+  </style>
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="brand">ETF 投资仪表盘</div>
+    <div class="brand-sub">纪律 · 估值 · 自主决策</div>
+    <div class="nav-group">核心</div>
+    <a href="/#overview"><span class="ico">🏠</span>首页总览</a>
+    <a href="/#valuation"><span class="ico">🌡️</span>估值温度计</a>
+    <a href="/self-calc"><span class="ico">🧮</span>自算估值</a>
+    <a href="/self-calib"><span class="ico">📐</span>口径标定</a>
+    <a href="/#actionSheet"><span class="ico">⚡</span>今日动作单</a>
+    <a href="/index-detail"><span class="ico">🔍</span>指数详情</a>
+    <div class="nav-group">策略</div>
+    <a href="/menpiao" class="active"><span class="ico">🎫</span>门票股</a>
+  </aside>
+
+  <main class="main">
+    <div class="hero" style="padding:22px 28px">
+      <div><h1>🎫 <em>门票股</em></h1>
+        <p>按 E大（ETF拯救世界）原文规则量化复刻的打新门票股筛选：成长 + 估值双条件、等权组合。数据源东财半年报全量 + 本地逐股 PE_TTM，代码名称已双源核验。</p></div>
+    </div>
+
+    <section class="panel">
+      <div class="mp-rule">
+        <b>10年计划</b>：过去十年每个半年利润都在增加；再筛 <b>PE&lt;25</b>、<b>PE&lt;5年年均增长率</b>、<b>PE&lt;最近一期年报增长率</b><br>
+        <b>5年计划</b>：过去5年每个半年利润都在增加；再筛 <b>PE&lt;25</b>、<b>PE&lt;5年年均增长率</b>、<b>PE&lt;最近一期季报增长率</b>
+        <div class="src">原文：chinaetfs.cn/a/580（作者 ETF拯救世界）· 方法论：a/1891「每季报公布完毕重筛／不深研公司／量化选一大批／等权买入／十只以上／控制仓位」</div>
+        <div class="src" style="margin-top:6px;color:#a16207"><b>收紧口径（可切换）</b>：E大原文写"每个半年"，本页额外提供"<b>每一期报告（含一季报/三季报）利润同比全为正</b>"的更严版本。收紧后池子大幅缩小（10年组 8→2 只、5年组 31→21 只），且明显偏银行——因为银行是常年每季度都能正增长的少数行业。</div>
+      </div>
+
+      <div id="mpMeta" class="mp-note">载入中…</div>
+
+      <div class="mp-tabs" id="mpTabs">
+        <button class="mp-tab on" data-t="strict">组合C · 推荐（季度收紧·不硬凑）</button>
+        <button class="mp-tab" data-t="robust">组合B · 半年口径（剔低基数）</button>
+        <button class="mp-tab" data-t="planA">组合A · 严格原文规则</button>
+        <button class="mp-tab" data-t="p10">10年组</button>
+        <button class="mp-tab" data-t="p5">5年组</button>
+        <button class="mp-tab" data-t="p10s">季度·10年组</button>
+        <button class="mp-tab" data-t="p5s">季度·5年组</button>
+        <button class="mp-tab" data-t="both">双重通过</button>
+        <button class="mp-tab" data-t="excl">剔除项</button>
+      </div>
+
+      <div class="mp-wrap"><table id="mpTable">
+        <thead><tr>
+          <th>代码</th><th>名称</th><th>行业</th><th>市</th>
+          <th class="num">PE</th><th class="num">5年复合%</th><th class="num">基期净利(亿)</th>
+          <th class="num">最新增速%</th><th class="num">分</th><th>来源</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table></div>
+
+      <div class="mp-dist" id="mpDist"></div>
+      <div class="mp-note" id="mpFoot" style="margin-top:14px"></div>
+    </section>
+  </main>
+
+  <script>
+  const fmt = (v, d=2) => (v === null || v === undefined) ? '-' : Number(v).toFixed(d);
+  let DATA = null;
+
+  function rows() {
+    const t = document.querySelector('.mp-tab.on').dataset.t;
+    if (!DATA) return [];
+    if (t === 'strict') return DATA.portfolio_strict || [];
+    if (t === 'robust') return DATA.portfolio_robust || [];
+    if (t === 'planA') return DATA.portfolio || [];
+    if (t === 'p10') return DATA.plan_10y || [];
+    if (t === 'p5') return DATA.plan_5y || [];
+    if (t === 'p10s') return DATA.plan_10y_strict || [];
+    if (t === 'p5s') return DATA.plan_5y_strict || [];
+    if (t === 'both') return DATA.both || [];
+    return [...(DATA.low_base_excluded || []).map(r => ({...r, pick_note: '低基数剔除'})),
+            ...(DATA.anomalies_excluded || []).map(r => ({...r, pick_note: '增速异常剔除'}))];
+  }
+
+  function render() {
+    const tb = document.querySelector('#mpTable tbody');
+    const rs = rows();
+    tb.innerHTML = rs.map(r => {
+      const flag = r.low_base ? '<span class="tag w">低基数</span>' : '';
+      const note = r.pick_note || '';
+      return `<tr>
+        <td style="font-variant-numeric:tabular-nums">${r.code}</td>
+        <td>${flag}${r.name || ''}</td>
+        <td>${r.industry || '-'}</td>
+        <td><span class="mk ${r.market || ''}">${r.market || '-'}</span></td>
+        <td class="num">${fmt(r.pe)}</td>
+        <td class="num">${fmt(r.cagr5)}</td>
+        <td class="num">${r.np_base_yi === null || r.np_base_yi === undefined ? '-' : fmt(r.np_base_yi)}</td>
+        <td class="num">${fmt(r.last_growth)}</td>
+        <td class="num">${r.score === undefined ? '-' : fmt(r.score)}</td>
+        <td style="font-size:12.5px;color:var(--muted)">${note}</td>
+      </tr>`;
+    }).join('') || '<tr><td colspan="10" class="muted" style="padding:18px">无数据</td></tr>';
+
+    const t = document.querySelector('.mp-tab.on').dataset.t;
+    const d = DATA.dist || {};
+    let chips = '';
+    if (t === 'strict') chips = [[d.strict_market, '沪深'], [d.strict_industry, '行业']];
+    else if (t === 'robust') chips = [[d.robust_market, '沪深'], [d.robust_industry, '行业']];
+    else if (t === 'planA') chips = [[d.portfolio_market, '沪深'], [d.portfolio_industry, '行业']];
+    else if (t === 'p10') chips = [[d.plan_10y_market, '沪深']];
+    else if (t === 'p5') chips = [[d.plan_5y_market, '沪深']];
+    document.querySelector('#mpDist').innerHTML = chips.map(([o, lbl]) =>
+      !o ? '' : Object.entries(o).map(([k, v]) => `<div class="mp-chip">${lbl} · ${k} <b>${v}</b></div>`).join('')
+    ).join('');
+  }
+
+  document.querySelectorAll('.mp-tab').forEach(b => b.onclick = () => {
+    document.querySelectorAll('.mp-tab').forEach(x => x.classList.remove('on'));
+    b.classList.add('on'); render();
+  });
+
+  fetch('/api/menpiao').then(r => r.json()).then(j => {
+    DATA = j;
+    const w = j.window || {};
+    document.querySelector('#mpMeta').innerHTML =
+      `数据截止 <b>${j.generated || '-'}</b> · 10年组考察期 ${(w.plan_10y||[]).slice(0,2).join(' ~ ')}（${(w.plan_10y||[])[2] || '-'} 个半年报）`
+      + ` · 5年组 ${(w.plan_5y||[]).slice(0,2).join(' ~ ')}（${(w.plan_5y||[])[2] || '-'} 个半年报）`
+      + `<br>季度收紧口径考察期：10年组 ${(w.plan_10y_strict||[]).slice(0,2).join(' ~ ')}（${(w.plan_10y_strict||[])[2] || '-'} 期报告）`
+      + ` · 5年组 ${(w.plan_5y_strict||[]).slice(0,2).join(' ~ ')}（${(w.plan_5y_strict||[])[2] || '-'} 期报告）`
+      + `<br>规则来源：${j.rule_src || '-'}`;
+    document.querySelector('#mpFoot').innerHTML =
+      `共筛出 <b>半年口径</b>：10年组 <b>${(j.plan_10y||[]).length}</b> 只、5年组 <b>${(j.plan_5y||[]).length}</b> 只、双重通过 <b>${(j.both||[]).length}</b> 只；`
+      + `<b>季度收紧口径</b>：10年组 <b>${(j.plan_10y_strict||[]).length}</b> 只、5年组 <b>${(j.plan_5y_strict||[]).length}</b> 只。`
+      + `<br>组合构建约束（E大未给具体数值，按其「组合化／单一品种不可致命／十只以上／等权」原则落地）：单行业上限 2 只（银行类 3 只）、沪深各自至少 3 只（打新额度两市分开计算）、基期年净利 &lt; 1 亿视为低基数导致 CAGR 虚高而剔除、最新增速 &gt; 100%（疑似一次性损益）剔除。`
+      + `<br><b>组合C 严格执行行业上限、不硬凑</b>——收紧口径后候选池本身就窄（非银行合格标的很少），为凑到 15 只只能靠加银行，那等于自己破掉分散约束，所以到 10 只就停（E大原话本就是"十只以上"）。组合A/B 为半年口径供对比。`
+      + `<br>排序分 = PE − 5年复合增速（越小＝相对成长越便宜）。`
+      + `<br><b>E大原话「我不荐股」——本页是规则复刻，不构成投资建议。</b>`;
+    render();
+  }).catch(e => {
+    document.querySelector('#mpMeta').textContent = '载入失败：' + e;
+  });
+  </script>
+</body>
+</html>

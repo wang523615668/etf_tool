@@ -964,6 +964,25 @@ def self_calc_page() -> str:
     return page.read_text(encoding="utf-8")
 
 
+@app.get("/menpiao", response_class=HTMLResponse)
+def menpiao_page() -> str:
+    """门票股: 按 E大规则(成长+估值)量化筛选的打新配市值候选 + 等权组合。"""
+    page = STATIC / "menpiao.html"
+    if not page.exists():
+        return "<h1>menpiao page missing</h1>"
+    return page.read_text(encoding="utf-8")
+
+
+@app.get("/api/menpiao")
+async def api_menpiao():
+    """门票股筛选结果(data/menpiao_result.json, 由 scripts/menpiao_portfolio.py 生成)。"""
+    import json as _json
+    fp = DATA / "menpiao_result.json"
+    if not fp.exists():
+        return {"error": "结果未生成，请先运行 scripts/menpiao_portfolio.py"}
+    return _json.loads(fp.read_text(encoding="utf-8"))
+
+
 async def _run_calc(fn):
     """估值重计算(逐日快照最大~30MB)丢线程池，不阻塞事件循环。"""
     import asyncio

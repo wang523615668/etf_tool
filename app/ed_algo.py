@@ -60,6 +60,32 @@ def _mx():
             _MX[k] = {d: v for d, v in j.items() if v}
     return _MX
 
+_TSW = None
+def _tsw():
+    """Tushare(中转站)历史时点成分+权重: {指数名: {"YYYY-MM": {code.SH: weight}}}"""
+    global _TSW
+    if _TSW is None:
+        j = _load(f"{DATA}/ts_index_weight.json", {})
+        _TSW = {k: {d: v for d, v in (vs or {}).items() if v} for k, vs in j.items()}
+    return _TSW
+
+def ts_pool(name, snap, ctx):
+    """按日取 Tushare 历史成分(权重级); 返回 (rows, weights)"""
+    j = (_tsw().get(name) or {})
+    if not j:
+        return [], {}
+    mk = ctx.date[:7]
+    ds = [d for d in j if d <= mk]
+    if not ds:
+        return [], {}
+    cur = j[max(ds)]
+    rows, w = [], {}
+    for code, wt in cur.items():
+        c = code.split(".")[0]
+        if c in snap:
+            rows.append(snap[c]); w[c] = wt
+    return rows, w
+
 def load_config():
     j = _load(f"{DATA}/ed_perindex_best.json", {})
     out = {}
@@ -194,8 +220,11 @@ def pool(name, snap, ctx, mode="current"):
         return list(snap.values())
     if name == "全市场·主板(E大口径)":
         return [r for c, r in snap.items() if c.startswith(("60", "00"))]
+    if mode in ("tsw", "tspit"):
+        # Tushare(中转站)历史时点成分(按月, ≤当日最近一期; 权重版)
+        r, _w = ts_pool(name, snap, ctx)
+        return r
     if mode in ("mx", "mx807", "mx801120"):
-        # 妙想(东财)历史时点成分(按月, 取不晚于当日的最近一期; mx807=中证000807, mx801120=申万)
         key = "食品饮料" if mode == "mx807" else "食品饮料·申万"
         j = (_mx().get(key) or {})
         ds = [d for d in j if d <= ctx.date]
