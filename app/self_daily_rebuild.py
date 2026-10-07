@@ -17,6 +17,10 @@ FULL = f"{BASE}/data/ed_hist_full"
 # app 序列名 → 配置列名(不同才需要)
 ALIAS = {"全市场·主板(E大口径)": "全市场", "全市场·沪深京": "全市场加权"}
 DRY = "--dry" in sys.argv
+# --only 名称1,名称2 → 只重算指定列(改单列口径时不必等全量 2123天×27列)
+ONLY = None
+if "--only" in sys.argv:
+    ONLY = {x.strip() for x in sys.argv[sys.argv.index("--only") + 1].split(",") if x.strip()}
 
 def load_snap(date):
     with open(f"{FULL}/{date}.json") as f:
@@ -45,6 +49,8 @@ def main():
             continue
         key = ALIAS.get(d.get("name"), d.get("name"))
         if key in cfg:
+            if ONLY and key not in ONLY:
+                continue
             targets.append((fn, d, key, cfg[key]))
     print(f"待重算序列 {len(targets)} 条:")
     for fn, d, key, c in targets:

@@ -70,6 +70,15 @@ def build_ctx(date, current=None, sina_pit=None, bspit=None, code_names=None):
     bs  = bspit   if bspit   is not None else _load(f"{DATA}/pit_cons_monthly.json", {})
     return Ctx(date, cur, pit, bs, code_names or INDEX_CODE)
 
+_SW_CACHE = None
+def _sw():
+    """申万行业成分(akshare index_component_sw 抓取, scripts/fetch_sw_cons.py 维护)
+    {行业名: [[代码, 名称, 计入日期], ...]}"""
+    global _SW_CACHE
+    if _SW_CACHE is None:
+        _SW_CACHE = _load(f"{DATA}/sw_industry_cons.json", {})
+    return _SW_CACHE
+
 # ---------- 算法 ----------
 def _pos(v):
     return v if isinstance(v, (int, float)) and v > 0 else None
@@ -132,6 +141,8 @@ MODE_CN = {
     "mktcap": "当时成分(按市值排名还原)",
     "bspit": "当时成分(月度名单)",
     "lixinger": "当时成分(理杏仁历史时点名单)",
+    "sw": "申万行业成分",
+    "sw_pit": "申万行业成分(按计入日期)",
 }
 ALGO_CN = {
     "中位TTM剔亏": "滚动PE·剔除亏损·取中位",
@@ -156,7 +167,8 @@ def pb_fn(p):
 
 # ---------- 名单池 ----------
 def pool(name, snap, ctx, mode="current"):
-    """snap: {股票代码: {'PE_TTM','PE_LAR','PB_MRQ','TOTAL_MARKET_CAP'}}"""
+    """snap: {股票代码: {'PE_TTM','PE_LAR','PB_MRQ','TOTAL_MARKET_CAP'}}
+    mode 支持: current / pit / mktcap / bspit / lixinger / sw(申万行业, 名字即行业名)"""
     if name == "全市场":
         return [r for c, r in snap.items() if c.startswith(("60", "00"))]
     if name == "全市场加权":
@@ -165,6 +177,13 @@ def pool(name, snap, ctx, mode="current"):
         return list(snap.values())
     if name == "全市场·主板(E大口径)":
         return [r for c, r in snap.items() if c.startswith(("60", "00"))]
+    if mode in ("sw", "sw_pit"):
+        # 申万行业成分(E大估值表的行业列, 如"食品饮料"=申万801120的122只, 非中证细分000815)
+        j = _sw().get(name) or []
+        if not isinstance(j, list):
+            return []
+        codes = [c for c, _nm, incl in j if (mode == "sw" or (not incl) or incl <= ctx.date)]
+        return [snap[c] for c in codes if c in snap]
     if mode == "mktcap" and name in MKRULE:
         prefs, lo, hi = MKRULE[name]
         cand = sorted(((c, r) for c, r in snap.items()

@@ -25,7 +25,11 @@ DRY = "--dry" in sys.argv
 SHADOW_ALGO, SHADOW_LIST = "中位TTM剔亏", "current"   # 统一基准口径(=旧统一口径)
 
 def load_truth():
-    email = json.load(open("/root/.hermes/cache/scratch/ed_truth_multi.json"))
+    # 真值优先读 data/(2026-10-07 从 scratch 抢救, scratch 72h 会被清)
+    p = f"{ET}/data/ed_truth_multi.json"
+    if not os.path.exists(p):
+        p = "/root/.hermes/cache/scratch/ed_truth_multi.json"
+    email = json.load(open(p))
     anchors = json.load(open(f"{ET}/data/ed_anchors_prose.json"))["items"]
     return email, anchors
 
