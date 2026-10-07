@@ -90,7 +90,7 @@ def main():
         d["latest"] = rows[-1] if rows else None
         d["algo"] = c["algo"]
         d["list_mode"] = c["list"]
-        d["method"] = ed_algo.describe(c["algo"], c["list"])
+        d["method"] = ed_algo.describe(c["algo"], c["list"], c.get("pe_cap"))
         d["pit"] = c["list"] in ("pit", "bspit")
         if rows:
             d["p5y"] = pctile(rows, rows[-1]["pe"], 5, rows[-1]["date"])

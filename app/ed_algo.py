@@ -51,7 +51,10 @@ def load_config():
     j = _load(f"{DATA}/ed_perindex_best.json", {})
     out = {}
     for name, v in (j.get("indices") or {}).items():
-        out[name] = {"algo": v.get("algo"), "list": v.get("list", "current")}
+        c = {"algo": v.get("algo"), "list": v.get("list", "current")}
+        if v.get("pe_cap"):          # 微利股剔除(创业板综/全市场加权=200)
+            c["pe_cap"] = v["pe_cap"]
+        out[name] = c
     return out
 
 class Ctx:
@@ -157,8 +160,9 @@ ALGO_CN = {
     "加权整体法": "市值加权整体法",
 }
 
-def describe(algo, mode):
-    return f"{ALGO_CN.get(algo, algo)} · {MODE_CN.get(mode, mode)} · PB=剔亏中位"
+def describe(algo, mode, cap=None):
+    tail = f" · 剔除PE>{cap}微利股" if cap else ""
+    return f"{ALGO_CN.get(algo, algo)} · {MODE_CN.get(mode, mode)}{tail} · PB=剔亏中位"
 
 def pb_fn(p):
     """PB 统一用 剔亏中位(与E大PB列一致, 已验证 ±1%)"""
@@ -214,11 +218,15 @@ def pool(name, snap, ctx, mode="current"):
     return [snap[c] for c in codes if c in snap]
 
 def series_value(snap, name, cfg, ctx):
-    """返回 (pe, pb, n)。cfg[name] 缺省时退回统一口径 中位TTM剔亏/current"""
+    """返回 (pe, pb, n)。cfg[name] 缺省时退回统一口径 中位TTM剔亏/current
+    支持 cfg[name]['pe_cap']: 剔除 PE_TTM>cap 的微利股(创业板综/全市场加权需 200)"""
     c = cfg.get(name) or {}
     mode = c.get("list", "current")
     fn = algo_fn(c.get("algo") or "中位TTM剔亏") or ALGOS["中位TTM剔亏"]
     p = pool(name, snap, ctx, mode)
+    cap = c.get("pe_cap")
+    if cap and p:
+        p = [r for r in p if not (isinstance(r.get("PE_TTM"), (int, float)) and r["PE_TTM"] > cap)]
     if not p: return None, None, 0
     try:
         pe = fn(p)

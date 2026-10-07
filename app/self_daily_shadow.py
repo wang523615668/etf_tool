@@ -43,6 +43,10 @@ def pick_alt(snap, key, algo, primary, ctx):
 
 def main():
     cfg = ed_algo.load_config()
+    only = None
+    if "--only" in sys.argv:
+        only = {x.strip() for x in sys.argv[sys.argv.index("--only") + 1].split(",") if x.strip()}
+    globals()["ONLY"] = only
     dates = sorted(f[:-5] for f in os.listdir(FULL) if f.endswith(".json"))
     print(f"快照 {len(dates)} 天, 配置 {len(cfg)} 列")
     targets = []
@@ -54,6 +58,8 @@ def main():
             continue
         key = ALIAS.get(d.get("name"), d.get("name"))
         if key not in cfg:
+            continue
+        if ONLY and key not in ONLY:      # --only 名称1,名称2 (改单列时不必全量)
             continue
         targets.append((fn, key, cfg[key]))
     print(f"影子序列 {len(targets)} 条")
@@ -75,7 +81,10 @@ def main():
             m, a = chosen.get(fn)
             if not m:
                 m, a = alt_list(c["list"]), c["algo"]
-            pe, pb, n = ed_algo.series_value(snap, key, {key: {"algo": a, "list": m}}, ctx)
+            _c = {"algo": a, "list": m}
+            if c.get("pe_cap"):
+                _c["pe_cap"] = c["pe_cap"]     # 与主序列同口径剔除微利股
+            pe, pb, n = ed_algo.series_value(snap, key, {key: _c}, ctx)
             if pe is not None:
                 acc[fn].append({"date": date, "pe": pe, "pb": pb, "n": n})
         if i % 250 == 0:

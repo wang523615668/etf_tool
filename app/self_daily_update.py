@@ -147,7 +147,7 @@ def main():
             pe, pb, n = ed_algo.series_value(snap, key, cfg, ctx)
             c = cfg[key]
             d['algo'] = c['algo']; d['list_mode'] = c['list']
-            d['method'] = ed_algo.describe(c['algo'], c['list'])
+            d['method'] = ed_algo.describe(c['algo'], c['list'], c.get('pe_cap'))
             d['pit'] = c['list'] in ('pit', 'bspit')
         else:
             pe, pb, n = legacy_value(d, snap)
